@@ -1,0 +1,5 @@
+channels 3
+bend_ranges 12 127 3 0 0 0 0 0 0 0 0 0 0 0 0 0
+cut_notes 0
+channel_10_presets
+warning track 1 bends up to 131 semitones; MIDI allows 127

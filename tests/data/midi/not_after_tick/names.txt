@@ -1,0 +1,4 @@
+channels 4
+bend_ranges 2 2 2 0 0 0 0 0 0 0 0 0 0 0 0 0
+cut_notes 0
+channel_10_presets
