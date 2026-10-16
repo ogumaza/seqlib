@@ -5,6 +5,7 @@
 #include "seqlib/wav.h"
 
 #include <cstdint>
+#include <stdexcept>
 #include <vector>
 
 #include "test.h"
@@ -69,6 +70,115 @@ SEQLIB_TEST(wav, WavFiles)
     {
         SEQLIB_CHECK(seqlib::WavFile(c.samples, c.rate) == c.expected);
     }
+}
+
+// One channel without a loop gives the mono file's bytes.
+SEQLIB_TEST(wav, OneChannel)
+{
+    const std::vector<std::vector<int16_t>> kSamples = {{}, {0, 1, -1, 32767, -32768}, {1234}, Ramp()};
+    for (const std::vector<int16_t>& samples : kSamples)
+    {
+        seqlib::Pcm pcm;
+        pcm.channels = {samples};
+
+        const std::vector<uint8_t> file = seqlib::WavFile(pcm, 44100);
+
+        SEQLIB_CHECK(file == seqlib::WavFile(samples, 44100));
+    }
+}
+
+// Two channels with a loop: interleaved samples, then a smpl chunk. The loop's end in the chunk is the last sample that
+// the loop plays. A sample lasts 31,250 ns at 32 kHz.
+SEQLIB_TEST(wav, StereoLoop)
+{
+    seqlib::Pcm pcm;
+    pcm.channels = {{1, -2, 3}, {256, -32768, 32767}};
+    pcm.loop = true;
+    pcm.loop_start = 1;
+    pcm.loop_end = 3;
+    const std::vector<uint8_t> kExpected = {
+        0x52, 0x49, 0x46, 0x46, 0x74, 0x00, 0x00, 0x00, // RIFF, 116 bytes
+        0x57, 0x41, 0x56, 0x45,                         // WAVE
+        0x66, 0x6d, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, // fmt, 16 bytes
+        0x01, 0x00, 0x02, 0x00, 0x00, 0x7d, 0x00, 0x00, // PCM, 2 channels, 32 kHz
+        0x00, 0xf4, 0x01, 0x00, 0x04, 0x00, 0x10, 0x00, // 128,000 bytes a second, 4 bytes a block, 16 bits
+        0x64, 0x61, 0x74, 0x61, 0x0c, 0x00, 0x00, 0x00, // data, 12 bytes
+        0x01, 0x00, 0x00, 0x01, 0xfe, 0xff, 0x00, 0x80, // the first two frames
+        0x03, 0x00, 0xff, 0x7f,                         // the third frame
+        0x73, 0x6d, 0x70, 0x6c, 0x3c, 0x00, 0x00, 0x00, // smpl, 60 bytes
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // manufacturer, product
+        0x12, 0x7a, 0x00, 0x00, 0x3c, 0x00, 0x00, 0x00, // 31,250 ns a sample, unity note 60
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // pitch fraction, SMPTE format
+        0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, // SMPTE offset, one loop
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // no sampler data, the loop's identifier
+        0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, // forward, from sample 1
+        0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // to sample 2, no fraction
+        0x00, 0x00, 0x00, 0x00,                         // plays without end
+    };
+
+    const std::vector<uint8_t> file = seqlib::WavFile(pcm, 32000);
+
+    SEQLIB_CHECK(file == kExpected);
+}
+
+// Three channels take WAVE_FORMAT_EXTENSIBLE, with no speaker positions and the PCM subtype.
+SEQLIB_TEST(wav, Extensible)
+{
+    seqlib::Pcm pcm;
+    pcm.channels = {{100}, {-100}, {0}};
+    const std::vector<uint8_t> kExpected = {
+        0x52, 0x49, 0x46, 0x46, 0x42, 0x00, 0x00, 0x00, // RIFF, 66 bytes
+        0x57, 0x41, 0x56, 0x45,                         // WAVE
+        0x66, 0x6d, 0x74, 0x20, 0x28, 0x00, 0x00, 0x00, // fmt, 40 bytes
+        0xfe, 0xff, 0x03, 0x00, 0x80, 0xbb, 0x00, 0x00, // extensible, 3 channels, 48 kHz
+        0x00, 0x65, 0x04, 0x00, 0x06, 0x00, 0x10, 0x00, // 288,000 bytes a second, 6 bytes a block, 16 bits
+        0x16, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, // 22 bytes more, 16 valid bits, no speakers
+        0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, // KSDATAFORMAT_SUBTYPE_PCM: 00000001-0000-0010
+        0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71, // 8000-00AA00389B71
+        0x64, 0x61, 0x74, 0x61, 0x06, 0x00, 0x00, 0x00, // data, 6 bytes
+        0x64, 0x00, 0x9c, 0xff, 0x00, 0x00,             // one frame
+    };
+
+    const std::vector<uint8_t> file = seqlib::WavFile(pcm, 48000);
+
+    SEQLIB_CHECK(file == kExpected);
+}
+
+// No channels, channels of different lengths and loops outside the samples throw.
+SEQLIB_TEST(wav, Refusals)
+{
+    const auto refused = [](const seqlib::Pcm& pcm)
+    {
+        try
+        {
+            seqlib::WavFile(pcm, 32000);
+        }
+        catch (const std::invalid_argument&)
+        {
+            return true;
+        }
+
+        return false;
+    };
+    seqlib::Pcm none;
+    seqlib::Pcm uneven;
+    uneven.channels = {{1, 2}, {3}};
+    seqlib::Pcm empty_loop;
+    empty_loop.channels = {{1, 2, 3}};
+    empty_loop.loop = true;
+    empty_loop.loop_start = 2;
+    empty_loop.loop_end = 2;
+    seqlib::Pcm long_loop = empty_loop;
+    long_loop.loop_end = 4;
+    seqlib::Pcm whole_loop = empty_loop;
+    whole_loop.loop_start = 0;
+    whole_loop.loop_end = 3;
+
+    SEQLIB_CHECK(refused(none));
+    SEQLIB_CHECK(refused(uneven));
+    SEQLIB_CHECK(refused(empty_loop));
+    SEQLIB_CHECK(refused(long_loop));
+    SEQLIB_CHECK(!refused(whole_loop));
 }
 
 } // namespace

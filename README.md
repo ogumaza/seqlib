@@ -37,7 +37,7 @@ seqlib depends on nothing but the C++ standard library.
 - **SFZ track files** (`seqlib/sfz/track_file.h`): a sequence's SFZ files, one for each track that has a MIDI channel.
   `TrackFiles` writes the parts of each file that don't depend on the instrument model, such as the pan curve. A hook
   adds the rest: other controller curves, opcodes and each preset's regions.
-- **WAV files** (`seqlib/wav.h`): mono 16-bit PCM.
+- **WAV files** (`seqlib/wav.h`): 16-bit PCM with any number of channels, and a loop in a `smpl` chunk.
 - **Loops** (`seqlib/loop.h`): a sample's loop unrolled to meet the requirements of SoundFont players and sfizz.
   Playback stays the same.
 - **File names** (`seqlib/file_name.h`): names that are valid on Windows, macOS and Linux, with rules for trailing
