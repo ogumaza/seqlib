@@ -25,15 +25,16 @@ struct MidiReport
     std::vector<std::string> warnings;
 };
 
-// Where an event goes in MIDI time, given its tick's frame (Performance::frame_ticks).
+// Where an event goes in MIDI time, given its tick's frame (Performance::frame_ticks). In either timing, each event
+// stays on its side of a loop marker. An event at or after the marker's tick comes no earlier than the marker. An event
+// before that tick comes at least one MIDI tick before the marker. A player that loops at the marker could otherwise
+// skip an event on the marker's MIDI tick.
 enum class FrameTiming
 {
-    // At its frame's start, but never after its tick. A loop marker moves an event at or after it no earlier than the
-    // marker.
+    // At its frame's start, but never after its tick.
     kNotAfterTick,
 
-    // At its frame's start, even after its tick, for a player that runs a tick at the start of a later frame. A loop
-    // marker also moves an event before it no later than the marker.
+    // At its frame's start, even after its tick, for a player that runs a tick at the start of a later frame.
     kFrameStart,
 };
 
@@ -44,9 +45,10 @@ struct MidiOptions
 };
 
 // Writes Format 1 MIDI: a conductor track for tempo and loop markers, plus a track for each sequence track/channel
-// pair. Uses at least 7680 ticks per quarter note, with an integer number of MIDI ticks per performance tick. Places
-// events at the start of their frame (Performance::frame_ticks). SoundFont preset i uses CC0 = i / 128 and
-// program = i % 128. Fills `report` with allocation details and warnings.
+// pair. The performance's loop counts only if it ends after it starts. Uses at least 7680 ticks per quarter note, with
+// an integer number of MIDI ticks per performance tick. Places events at the start of their frame
+// (Performance::frame_ticks). SoundFont preset i uses CC0 = i / 128 and program = i % 128. Fills `report` with
+// allocation details and warnings.
 //
 // Each part of a track (TrackEvent::part) that plays a note gets a channel of its own while channels last. A part with
 // notes but no channel plays on the channels of the track's first part. The events of a part without notes are dropped.

@@ -9,6 +9,7 @@
 #include <exception>
 #include <iostream>
 #include <ostream>
+#include <source_location>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -24,7 +25,7 @@ inline int failures = 0;
 // call. Empty for none.
 inline std::string context;
 
-// The test that runs. A runner of named tests sets it. Failures of the SEQLIB_ macros report it. Empty for none.
+// The test that runs. A runner of named tests sets it. Failures report it. Empty for none.
 inline std::string test_name;
 
 // Where the checks write: failures and Summary's count of them to `failure_stream`, and Summary's success to
@@ -62,24 +63,16 @@ inline void Fail(const char* expression, const char* file, int line)
     FailWith(file, line, std::string("CHECK failed: ") + expression);
 }
 
-// Counts a check. If `ok` is false, it also reports and counts a failure that `what` describes. This is for a check
-// whose message has to say more than its condition, such as which case failed. Returns `ok`. A test can then skip what
-// depends on it.
-inline bool Check(bool ok, const std::string& what)
+// Counts a check. If `ok` is false, it also reports and counts a failure that `what` describes, at `where`, as
+// FailWith does. `where` is the place of the call by default. This is for a check whose message has to say more than
+// its condition, such as which case failed. Returns `ok`. A test can then skip what depends on it.
+inline bool Check(bool ok, const std::string& what, std::source_location where = std::source_location::current())
 {
     checks++;
 
     if (!ok)
     {
-        failures++;
-
-        std::ostream& out = *failure_stream;
-        out << "CHECK failed: " << what;
-        if (!context.empty())
-        {
-            out << " (" << context << ')';
-        }
-        out << '\n' << std::flush;
+        FailWith(where.file_name(), static_cast<int>(where.line()), "CHECK failed: " + what);
     }
 
     return ok;

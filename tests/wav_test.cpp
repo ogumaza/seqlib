@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: MIT
 
-// Golden tests for seqlib/wav.h. The expected files are fixed: a change to them is a change of seqlib's output.
+// Golden tests for seqlib/wav.h. The expected files are fixed: a change to them is a change of seqlib's output. The
+// reader's tests build their files from the RIFF and WAVE specifications, and give the samples that those call for.
 
 #include "seqlib/wav.h"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
+#include "seqlib/read_error.h"
 #include "test.h"
 
 namespace
@@ -179,6 +187,284 @@ SEQLIB_TEST(wav, Refusals)
     SEQLIB_CHECK(refused(empty_loop));
     SEQLIB_CHECK(refused(long_loop));
     SEQLIB_CHECK(!refused(whole_loop));
+}
+
+// Appends `value` to `out` in `bytes` little-endian bytes.
+void Append(std::vector<uint8_t>& out, uint64_t value, std::size_t bytes)
+{
+    for (std::size_t i = 0; i < bytes; i++)
+    {
+        out.push_back(static_cast<uint8_t>(value >> (8 * i)));
+    }
+}
+
+// A RIFF WAVE file of `chunks`, each an ID and its data, with a pad byte after a chunk of odd size, and the RIFF
+// chunk's size that they give.
+std::vector<uint8_t> Riff(const std::vector<std::pair<std::string, std::vector<uint8_t>>>& chunks)
+{
+    std::vector<uint8_t> body = {'W', 'A', 'V', 'E'};
+    for (const auto& [id, data] : chunks)
+    {
+        body.insert(body.end(), id.begin(), id.end());
+        Append(body, data.size(), 4);
+        body.insert(body.end(), data.begin(), data.end());
+        if (data.size() % 2 != 0)
+        {
+            body.push_back(0);
+        }
+    }
+    std::vector<uint8_t> file = {'R', 'I', 'F', 'F'};
+    Append(file, body.size(), 4);
+    file.insert(file.end(), body.begin(), body.end());
+
+    return file;
+}
+
+// The data of a fmt chunk: the format tag, the channels, the rate, the block's size and the bits per sample.
+std::vector<uint8_t> Format(uint16_t tag, uint16_t channels, uint32_t rate, uint16_t block, uint16_t bits)
+{
+    std::vector<uint8_t> format;
+    Append(format, tag, 2);
+    Append(format, channels, 2);
+    Append(format, rate, 4);
+    Append(format, uint64_t{rate} * block, 4);
+    Append(format, block, 2);
+    Append(format, bits, 2);
+
+    return format;
+}
+
+// The data of a WAVE_FORMAT_EXTENSIBLE fmt chunk whose subtype's GUID starts with `subtype`.
+std::vector<uint8_t> Extensible(uint16_t subtype, uint16_t channels, uint32_t rate, uint16_t block, uint16_t bits)
+{
+    std::vector<uint8_t> format = Format(0xFFFE, channels, rate, block, bits);
+    Append(format, 22, 2);
+    Append(format, bits, 2);
+    Append(format, 0, 4);
+    Append(format, subtype, 2);
+    format.insert(format.end(), {0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71});
+
+    return format;
+}
+
+// The data of a smpl chunk with `loops`, each a type, a first sample, a last sample and a number of plays.
+std::vector<uint8_t> Sampler(const std::vector<std::array<uint32_t, 4>>& loops)
+{
+    std::vector<uint8_t> sampler;
+    Append(sampler, 0, 28);
+    Append(sampler, loops.size(), 4);
+    Append(sampler, 0, 4);
+    for (const std::array<uint32_t, 4>& loop : loops)
+    {
+        Append(sampler, 0, 4);
+        Append(sampler, loop[0], 4);
+        Append(sampler, loop[1], 4);
+        Append(sampler, loop[2], 4);
+        Append(sampler, 0, 4);
+        Append(sampler, loop[3], 4);
+    }
+
+    return sampler;
+}
+
+// The bytes of `values`, each a float or a double.
+template <class Real>
+std::vector<uint8_t> Reals(const std::vector<Real>& values)
+{
+    std::vector<uint8_t> bytes;
+    for (const Real value : values)
+    {
+        uint64_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(Real));
+        Append(bytes, bits, sizeof(Real));
+    }
+
+    return bytes;
+}
+
+// The one channel that `file` holds, or nothing when it holds several.
+std::vector<int16_t> Mono(const std::vector<uint8_t>& file)
+{
+    const seqlib::WavContents contents = seqlib::ReadWav(file);
+
+    return contents.pcm.channels.size() == 1 ? contents.pcm.channels[0] : std::vector<int16_t>{};
+}
+
+// The files that WavFile writes read back with their channels, their rate and their loop.
+SEQLIB_TEST(wav, ReadWrittenFiles)
+{
+    seqlib::Pcm mono;
+    mono.channels = {Ramp()};
+    seqlib::Pcm stereo;
+    stereo.channels = {{1, 2, 3, 4}, {-1, -2, -3, -4}};
+    stereo.loop = true;
+    stereo.loop_start = 1;
+    stereo.loop_end = 4;
+    seqlib::Pcm three = stereo;
+    three.channels.push_back({7, 8, 9, 10});
+
+    for (const seqlib::Pcm& pcm : {mono, stereo, three})
+    {
+        const seqlib::WavContents contents = seqlib::ReadWav(seqlib::WavFile(pcm, 44100));
+
+        SEQLIB_CHECK(contents.pcm.channels == pcm.channels && contents.rate == 44100);
+        SEQLIB_CHECK(contents.pcm.loop == pcm.loop && contents.pcm.loop_start == pcm.loop_start);
+        SEQLIB_CHECK(contents.pcm.loop_end == pcm.loop_end && contents.loops == (pcm.loop ? 1u : 0u));
+        SEQLIB_CHECK(contents.bits == 16 && !contents.floating && contents.loop_forward && contents.loop_endless);
+        SEQLIB_CHECK(contents.dropped == 0);
+    }
+}
+
+// Samples of 8, 12, 24 and 32 bits, and of 32-bit and 64-bit floating point, become 16 bits. An 8-bit sample is
+// unsigned, and a deeper one rounds half up. Floating point scales by 32,768, rounds half away from zero and clamps.
+// The extensible form's subtypes give the same samples, channel by channel.
+SEQLIB_TEST(wav, ReadSampleFormats)
+{
+    const std::vector<uint8_t> eight = Riff({{"fmt ", Format(1, 1, 8000, 1, 8)}, {"data", {0, 128, 255, 1}}});
+    const std::vector<uint8_t> twelve = Riff({{"fmt ", Format(1, 1, 8000, 2, 12)}, {"data", {0x30, 0x12}}});
+    const std::vector<uint8_t> deep_samples = {0xFF, 0xFF, 0x7F, 0x00, 0x00, 0x80, 0x80, 0x00, 0x00,
+                                               0x7F, 0x00, 0x00, 0x80, 0xFF, 0xFF, 0x7F, 0xFF, 0xFF};
+    const std::vector<uint8_t> deep = Riff({{"fmt ", Format(1, 1, 8000, 3, 24)}, {"data", deep_samples}});
+    std::vector<uint8_t> words;
+    for (const uint32_t word : {0x7FFFFFFFu, 0x80000000u, 0x00008000u, 0x00007FFFu, 0x12345678u})
+    {
+        Append(words, word, 4);
+    }
+    const std::vector<uint8_t> wide = Riff({{"fmt ", Format(1, 1, 8000, 4, 32)}, {"data", words}});
+    const float kNan = std::numeric_limits<float>::quiet_NaN();
+    const std::vector<float> singles = {0.5f, -1.0f, 1.0f, 2.0f, kNan, 1.0f / 65536.0f, -1.0f / 65536.0f};
+    const std::vector<uint8_t> single = Riff({{"fmt ", Format(3, 1, 8000, 4, 32)}, {"data", Reals(singles)}});
+    const std::vector<uint8_t> twice =
+        Riff({{"fmt ", Format(3, 1, 8000, 8, 64)}, {"data", Reals(std::vector<double>{0.25, -0.5})}});
+    const std::vector<uint8_t> frames = {0x00, 0x01, 0x00, 0x80, 0xFF, 0xFF, 0x00, 0x02, 0x00, 0x00, 0x00, 0x80};
+    const std::vector<uint8_t> extensible = Riff({{"fmt ", Extensible(1, 2, 8000, 6, 24)}, {"data", frames}});
+    const std::vector<uint8_t> extensible_float =
+        Riff({{"fmt ", Extensible(3, 1, 8000, 4, 32)}, {"data", Reals(std::vector<float>{-0.25f})}});
+
+    const seqlib::WavContents stereo = seqlib::ReadWav(extensible);
+
+    SEQLIB_CHECK((Mono(eight) == std::vector<int16_t>{-32768, 0, 32512, -32512}));
+    SEQLIB_CHECK((Mono(twelve) == std::vector<int16_t>{0x1230}));
+    SEQLIB_CHECK((Mono(deep) == std::vector<int16_t>{32767, -32768, 1, 0, 0, -1}));
+    SEQLIB_CHECK((Mono(wide) == std::vector<int16_t>{32767, -32768, 1, 0, 0x1234}));
+    SEQLIB_CHECK((Mono(single) == std::vector<int16_t>{16384, -32768, 32767, 32767, 0, 1, -1}));
+    SEQLIB_CHECK((Mono(twice) == std::vector<int16_t>{8192, -16384}));
+    SEQLIB_CHECK((stereo.pcm.channels == std::vector<std::vector<int16_t>>{{1, 2}, {0, -32768}}));
+    SEQLIB_CHECK(stereo.bits == 24 && !stereo.floating && seqlib::ReadWav(single).floating);
+    SEQLIB_CHECK((Mono(extensible_float) == std::vector<int16_t>{-8192}));
+}
+
+// The chunks end at the RIFF chunk's end or at the file's end. A size too small for the form type counts as unknown.
+// Other chunks are skipped, with their pad bytes, and only the first chunk of each kind counts. The last chunk can lack
+// its pad byte. A data chunk can be empty. Bytes that hold no whole frame stay out.
+SEQLIB_TEST(wav, ReadChunks)
+{
+    const std::vector<uint8_t> file =
+        Riff({{"LIST", {1, 2, 3}}, {"fmt ", Format(1, 1, 8000, 2, 16)}, {"data", {1, 0, 2, 0}}});
+    std::vector<uint8_t> large = file;
+    large[4] = 0xFF;
+    large[5] = 0xFF;
+    std::vector<uint8_t> unknown = file;
+    unknown[4] = 0;
+    unknown[5] = 0;
+    std::vector<uint8_t> trailing = file;
+    trailing.insert(trailing.end(), {'J', 'U', 'N', 'K', 0xFF, 0x00, 0x00, 0x00});
+    const std::vector<uint8_t> twice = Riff({{"fmt ", Format(1, 1, 8000, 2, 16)},
+                                             {"data", {1, 0, 2, 0}},
+                                             {"fmt ", Format(1, 2, 8000, 4, 16)},
+                                             {"data", {9, 0}}});
+    std::vector<uint8_t> unpadded = Riff({{"fmt ", Format(1, 1, 8000, 1, 8)}, {"data", {128, 129, 130}}});
+    unpadded.pop_back();
+    const std::vector<uint8_t> empty = Riff({{"fmt ", Format(1, 1, 8000, 2, 16)}, {"data", {}}});
+    const std::vector<uint8_t> partial = Riff({{"fmt ", Format(1, 2, 8000, 4, 16)}, {"data", {1, 0, 2, 0, 3, 0}}});
+
+    const seqlib::WavContents silent = seqlib::ReadWav(empty);
+    const seqlib::WavContents uneven = seqlib::ReadWav(partial);
+
+    for (const std::vector<uint8_t>& bytes : {file, large, unknown, trailing, twice})
+    {
+        SEQLIB_CHECK((Mono(bytes) == std::vector<int16_t>{1, 2}));
+    }
+    SEQLIB_CHECK((Mono(unpadded) == std::vector<int16_t>{0, 256, 512}));
+    SEQLIB_CHECK(silent.pcm.channels.size() == 1 && silent.pcm.channels[0].empty() && silent.dropped == 0);
+    SEQLIB_CHECK((uneven.pcm.channels == std::vector<std::vector<int16_t>>{{1}, {2}}) && uneven.dropped == 2);
+}
+
+// A file that isn't a WAV file, a chunk past the end, a missing or short fmt chunk, a missing data chunk, another
+// format, no channels, a rate of 0, a block that doesn't fit the format, and an extensible form that is short or has
+// another subtype are refused. A short fmt chunk is refused even when the bytes after it would complete it.
+SEQLIB_TEST(wav, ReadRefusals)
+{
+    const auto refused = [](const std::vector<uint8_t>& bytes)
+    {
+        try
+        {
+            seqlib::ReadWav(bytes);
+        }
+        catch (const seqlib::ReadError&)
+        {
+            return true;
+        }
+
+        return false;
+    };
+    const std::vector<uint8_t> data = {0, 0, 0, 0};
+    std::vector<uint8_t> avi = Riff({{"fmt ", Format(1, 1, 8000, 2, 16)}, {"data", data}});
+    std::memcpy(avi.data() + 8, "AVI ", 4);
+    std::vector<uint8_t> past = Riff({{"fmt ", Format(1, 1, 8000, 2, 16)}, {"data", data}});
+    past.resize(past.size() - 1);
+    std::vector<uint8_t> short_format = Format(1, 1, 8000, 2, 16);
+    short_format.resize(14);
+    const std::string completing = {'\x10', '\x00', 'x', 'x'};
+    std::vector<uint8_t> other_guid = Extensible(1, 1, 8000, 2, 16);
+    other_guid[26] = 0x21;
+    other_guid[27] = 0x07;
+
+    SEQLIB_CHECK(refused({}) && refused(avi) && refused(past));
+    SEQLIB_CHECK(refused(Riff({{"data", data}})) && refused(Riff({{"fmt ", short_format}, {"data", data}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", short_format}, {completing, {}}, {"data", data}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 1, 8000, 2, 16)}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(2, 1, 8000, 2, 16)}, {"data", data}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 0, 8000, 2, 16)}, {"data", data}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 1, 0, 2, 16)}, {"data", data}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 2, 8000, 3, 8)}, {"data", data}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 1, 8000, 2, 24)}, {"data", data}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(3, 1, 8000, 2, 16)}, {"data", data}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(3, 1, 8000, 4, 24)}, {"data", data}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(0xFFFE, 1, 8000, 2, 16)}, {"data", data}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Extensible(2, 1, 8000, 2, 16)}, {"data", data}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", other_guid}, {"data", data}})));
+    SEQLIB_CHECK(!refused(Riff({{"fmt ", Format(1, 1, 8000, 2, 16)}, {completing, {}}, {"data", data}})));
+}
+
+// The smpl chunk's first loop becomes the loop, with its type and plays. A loop past the samples stays out. A chunk
+// without loops gives none, and so does a chunk too short for its header or for its first loop.
+SEQLIB_TEST(wav, ReadLoops)
+{
+    const auto read = [](const std::vector<uint8_t>& sampler)
+    {
+        return seqlib::ReadWav(
+            Riff({{"fmt ", Format(1, 1, 8000, 1, 8)}, {"smpl", sampler}, {"data", std::vector<uint8_t>(16, 128)}}));
+    };
+    std::vector<uint8_t> short_header(32, 0);
+    short_header[28] = 1;
+    std::vector<uint8_t> short_loop = Sampler({});
+    short_loop[28] = 1;
+
+    const seqlib::WavContents forward = read(Sampler({{0, 2, 5, 0}}));
+    const seqlib::WavContents bouncing = read(Sampler({{1, 0, 15, 3}, {0, 1, 2, 0}}));
+    const seqlib::WavContents past = read(Sampler({{0, 2, 16, 0}}));
+    const seqlib::WavContents none = read(Sampler({}));
+    const seqlib::WavContents headless = read(short_header);
+    const seqlib::WavContents loopless = read(short_loop);
+
+    SEQLIB_CHECK(forward.pcm.loop && forward.pcm.loop_start == 2 && forward.pcm.loop_end == 6);
+    SEQLIB_CHECK(forward.loops == 1 && forward.loop_forward && forward.loop_endless);
+    SEQLIB_CHECK(bouncing.pcm.loop && bouncing.pcm.loop_start == 0 && bouncing.pcm.loop_end == 16);
+    SEQLIB_CHECK(bouncing.loops == 2 && !bouncing.loop_forward && !bouncing.loop_endless);
+    SEQLIB_CHECK(!past.pcm.loop && past.loops == 1);
+    SEQLIB_CHECK(!none.pcm.loop && none.loops == 0 && !headless.pcm.loop && headless.loops == 0);
+    SEQLIB_CHECK(!loopless.pcm.loop && loopless.loops == 1 && loopless.loop_forward && loopless.loop_endless);
 }
 
 } // namespace

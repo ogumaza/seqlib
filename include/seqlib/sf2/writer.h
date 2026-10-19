@@ -24,7 +24,7 @@ struct WriteOptions
 
 // Serialises a SoundFont. Writes ifil (2.01), isng, an empty INAM if `sf.info` has none, and then `sf.info`. Orders
 // each zone's generators as required: key range, velocity range, other generators, then sample or instrument. Appends
-// 46 zero samples after each sample. Throws std::runtime_error if there are more than 65,535 zones, generators or
+// 46 zero points after each sample. Throws std::runtime_error if there are more than 65,535 zones, generators or
 // modulators, and std::invalid_argument if an INFO field's ID doesn't have four characters.
 std::vector<uint8_t> Write(const SoundFont& sf, const WriteOptions& options = {});
 

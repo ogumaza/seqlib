@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// The tests' data files (see test_data.h).
+// The tests' data (see test_data.h).
 
 #include "test_data.h"
 
@@ -25,7 +25,7 @@ std::vector<uint8_t> ReadTestData(const std::string& name)
     return std::vector<uint8_t>(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
 }
 
-std::vector<uint8_t> ReadHexTestData(const std::string& name)
+std::vector<uint8_t> FromHex(std::string_view hex)
 {
     auto digit = [](uint8_t c)
     {
@@ -34,8 +34,9 @@ std::vector<uint8_t> ReadHexTestData(const std::string& name)
 
     std::vector<uint8_t> bytes;
     int high = -1;
-    for (const uint8_t c : ReadTestData(name))
+    for (const char character : hex)
     {
+        const auto c = static_cast<uint8_t>(character);
         if (!std::isxdigit(c))
         {
             continue;
@@ -53,6 +54,12 @@ std::vector<uint8_t> ReadHexTestData(const std::string& name)
     }
 
     return bytes;
+}
+
+std::vector<uint8_t> ReadHexTestData(const std::string& name)
+{
+    const std::vector<uint8_t> text = ReadTestData(name);
+    return FromHex(std::string(text.begin(), text.end()));
 }
 
 } // namespace seqlib::test

@@ -27,8 +27,9 @@ seqlib depends on nothing but the C++ standard library.
 - **SoundFont 2 writing** (`seqlib/sf2/soundfont.h`, `seqlib/sf2/writer.h`): samples, instruments, presets, zones,
   generators and modulators, with stereo links, INFO fields in the caller's order, and the 46 zero points that the
   format requires after each sample.
-- **SoundFont presets** (`seqlib/sf2/presets.h`): preset names by bank and program, and the copies of presets that
-  MIDI channel 10 plays from bank 128.
+- **SoundFont presets** (`seqlib/sf2/presets.h`): the zone that plays a sample over a range of keys and velocities,
+  an instrument with a preset that plays it, preset names by bank and program, and the copies of presets that MIDI
+  channel 10 plays from bank 128.
 - **SoundFont samples** (`seqlib/sf2/samples.h`): the samples that a prepared wave becomes, mono or a linked stereo
   pair, with loop points.
 - **SoundFont units** (`seqlib/sf2/units.h`): timecents, and a square-root pan law converted to SoundFont's pan law.
@@ -37,7 +38,11 @@ seqlib depends on nothing but the C++ standard library.
 - **SFZ track files** (`seqlib/sfz/track_file.h`): a sequence's SFZ files, one for each track that has a MIDI channel.
   `TrackFiles` writes the parts of each file that don't depend on the instrument model, such as the pan curve. A hook
   adds the rest: other controller curves, opcodes and each preset's regions.
-- **WAV files** (`seqlib/wav.h`): 16-bit PCM with any number of channels, and a loop in a `smpl` chunk.
+- **PCM** (`seqlib/pcm.h`): 16-bit channels of the same length, with a loop. The WAV writer and reader and the loop
+  functions use it.
+- **WAV files** (`seqlib/wav.h`): a writer of 16-bit PCM with any number of channels, and a loop in a `smpl` chunk.
+  A reader of PCM of up to 32 bits and of 32-bit or 64-bit floating point, in the plain or the extensible form. It
+  gives 16-bit channels, the rate and the first loop of a `smpl` chunk.
 - **Loops** (`seqlib/loop.h`): a sample's loop unrolled to meet the requirements of SoundFont players and sfizz.
   Playback stays the same.
 - **File names** (`seqlib/file_name.h`): names that are valid on Windows, macOS and Linux, with rules for trailing
@@ -74,7 +79,7 @@ The tests use synthetic files only.
 
 These options are on when seqlib is the project you build, and off when another project includes it:
 
-- `SEQLIB_BUILD_TESTS`: the tests, one CTest test for each module.
+- `SEQLIB_BUILD_TESTS`: the tests, one CTest test for each module. With the tools, a test of `seqlib_check` too.
 - `SEQLIB_BUILD_TOOLS`: `seqlib_check`.
 - `SEQLIB_INSTALL`: the install rules and the CMake package for `find_package`.
 

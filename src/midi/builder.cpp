@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <map>
+#include <numbers>
 #include <tuple>
 #include <utility>
 
@@ -15,8 +16,6 @@ namespace seqlib::midi
 {
 namespace
 {
-
-constexpr double kPi = 3.14159265358979323846;
 
 uint8_t Clamp7(int v)
 {
@@ -43,7 +42,7 @@ void LevelsToControllers(double left, double right, int& cc10, int& cc11)
     }
     else
     {
-        cc10 = std::clamp(int(std::lround(std::atan2(gr, gl) / (kPi / 2) * 127)), 0, 127);
+        cc10 = std::clamp(int(std::lround(std::atan2(gr, gl) / (std::numbers::pi / 2) * 127)), 0, 127);
     }
 
     const double kLoudestCentred = std::sqrt(2.0) * 127.0 / 128.0; // amplitude of the loudest centred voice

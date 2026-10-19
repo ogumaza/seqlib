@@ -46,7 +46,7 @@ public:
     // A tempo change. MIDI gives tempo in microseconds per quarter note.
     void Tempo(uint64_t tick, double bpm);
 
-    // Ends the track at `tick`, or after the last event if it is later.
+    // Ends the track at `tick`, or at the last event's tick when that comes later.
     void End(uint64_t tick);
 
     // Returns the track's data, without the chunk's ID and size.

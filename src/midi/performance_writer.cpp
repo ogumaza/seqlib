@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <initializer_list>
 #include <map>
+#include <optional>
 #include <utility>
 
 #include "seqlib/midi/encoder.h"
@@ -41,10 +42,18 @@ uint32_t TickScale(const Performance& perf)
     return (kMinDivision + timebase - 1) / timebase;
 }
 
+// Returns true if `perf` has a loop that the file marks: one that ends after it starts. The writer ignores any other
+// loop, in the markers and in the timing of events.
+bool MarksLoop(const Performance& perf)
+{
+    return perf.loop && perf.loop->end > perf.loop->start;
+}
+
 // Maps performance tick `tick` to a MIDI tick. A player processes ticks within its frames, and its changes sound from a
 // frame boundary. Places MIDI events at the start of their tick's frame (Performance::frame_ticks), or of their frame
 // between ticks (TrackEvent::after), rounded to the nearest MIDI tick. `timing` sets whether a frame's start may come
-// after its tick. Clamps at loop markers to keep events in the correct loop.
+// after its tick. Clamps at loop markers to keep events in the correct loop. An event before a marker goes at least one
+// MIDI tick before it. A player that loops at the marker can skip an event on the marker's tick.
 //
 // Uses 64 bits: MIDI tick positions can exceed 32 bits if a sequence starts with a small timebase and later increases
 // it.
@@ -62,7 +71,7 @@ uint64_t EventTick(const Performance& perf, FrameTiming timing, uint32_t tick, d
         midi_tick = timing == FrameTiming::kFrameStart ? frame_tick : std::min(midi_tick, frame_tick);
     }
 
-    if (perf.loop && perf.loop->end > perf.loop->start)
+    if (MarksLoop(perf))
     {
         for (const uint32_t marker : {perf.loop->start, perf.loop->end})
         {
@@ -70,9 +79,10 @@ uint64_t EventTick(const Performance& perf, FrameTiming timing, uint32_t tick, d
             {
                 midi_tick = std::max(midi_tick, marker * scale);
             }
-            else if (timing == FrameTiming::kFrameStart)
+            else
             {
-                midi_tick = std::min(midi_tick, marker * scale);
+                // Here the marker is above `tick`, and so above 0. The subtraction can't wrap.
+                midi_tick = std::min(midi_tick, marker * scale - 1);
             }
         }
     }
@@ -262,7 +272,7 @@ TrackEncoder ConductorTrack(const Performance& perf, const std::string& title,
         }
     };
 
-    if (perf.loop && perf.loop->end > perf.loop->start)
+    if (MarksLoop(perf))
     {
         const uint64_t start = perf.loop->start;
         tempo_before(start);
@@ -315,62 +325,103 @@ int BendRange(const Performance& perf, int t, const std::vector<bool>& plays, Mi
     return range;
 }
 
+// The controller that a setting of `kind` sets to the event's value: CC7, CC11, CC10, CC1, CC91 or CC93 for a named
+// kind, or the controller of a ControlKind(). None for any other kind.
+std::optional<uint8_t> ControllerFor(EventKind kind)
+{
+    switch (kind)
+    {
+    case EventKind::kVolume:
+        return 7;
+    case EventKind::kExpression:
+        return 11;
+    case EventKind::kPan:
+        return 10;
+    case EventKind::kModulation:
+        return 1;
+    case EventKind::kReverb:
+        return 91;
+    case EventKind::kChorus:
+        return 93;
+    default:
+        return IsControlKind(kind) ? std::optional<uint8_t>(ControllerOf(kind)) : std::nullopt;
+    }
+}
+
+// The layer among `mine` for a note-on of `key`: the first whose key is free, or else the one whose note of the key
+// started first. `sounding` holds each layer's note on each key, 0 for a free key. `since` holds the tick that it
+// started at.
+std::size_t LayerForNote(const std::vector<std::size_t>& mine, const std::vector<std::array<uint32_t, 128>>& sounding,
+                         const std::vector<std::array<uint32_t, 128>>& since, uint8_t key)
+{
+    const auto free = std::ranges::find_if(mine, [&](std::size_t l) { return sounding[l][key] == 0; });
+    if (free != mine.end())
+    {
+        return *free;
+    }
+
+    std::size_t oldest = mine[0];
+    for (const std::size_t l : mine)
+    {
+        if (since[l][key] < since[oldest][key])
+        {
+            oldest = l;
+        }
+    }
+
+    return oldest;
+}
+
 // Writes one MIDI track per channel of a sequence track, part by part and layer by layer. Assigns a note to the first
 // layer of its part with a free key. If all of them have that key in use, cuts that key's oldest note and records the
 // loss in `report`. A part with notes but no channel plays on the first part's channels. Drops the events of a part
-// without notes (PartsThatPlay).
+// without notes (PartsThatPlay). Records in `report` the track's bend range and the presets that it sends to the drum
+// channel.
 std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions& options, int t,
                                       const PartChannels& parts, MidiReport& report)
 {
-    std::vector<TrackEncoder> w;
-    std::vector<int> chans;
-    std::vector<std::vector<std::size_t>> part_writers(parts.size());
+    std::vector<TrackEncoder> layers;
+    std::vector<int> channels;
+    std::vector<std::vector<std::size_t>> part_layers(parts.size());
     for (std::size_t p = 0; p < parts.size(); p++)
     {
         for (const int channel : parts[p])
         {
-            const std::size_t l = w.size();
-            w.emplace_back();
+            const std::size_t l = layers.size();
+            layers.emplace_back();
             const std::string& name = perf.track_names[static_cast<std::size_t>(t)];
-            w.back().Meta(0, 0x03,
-                          (name.empty() ? "Track " + std::to_string(t) : name) +
-                              (l ? " (layer " + std::to_string(l + 1) + ")" : ""));
-            chans.push_back(channel);
-            part_writers[p].push_back(l);
+            layers.back().Meta(0, 0x03,
+                               (name.empty() ? "Track " + std::to_string(t) : name) +
+                                   (l ? " (layer " + std::to_string(l + 1) + ")" : ""));
+            channels.push_back(channel);
+            part_layers[p].push_back(l);
         }
     }
 
-    // The writers of part `part`.
+    // The layers of part `part`.
     auto of_part = [&](uint8_t part) -> const std::vector<std::size_t>&
     {
-        return part < part_writers.size() && !part_writers[part].empty() ? part_writers[part] : part_writers[0];
+        return part < part_layers.size() && !part_layers[part].empty() ? part_layers[part] : part_layers[0];
     };
 
     const std::vector<bool> plays = PartsThatPlay(perf, t);
     const int range = BendRange(perf, t, plays, report);
     report.bend_ranges[t] = range;
 
-    // Sends a channel message to the writers `to` at MIDI tick `midi_tick`.
+    // Sends a channel message to the layers `to` at MIDI tick `midi_tick`.
     auto send = [&](uint64_t midi_tick, const std::vector<std::size_t>& to, std::initializer_list<uint8_t> message)
     {
         for (const std::size_t l : to)
         {
             std::vector<uint8_t> b(message);
-            b[0] = static_cast<uint8_t>((b[0] & 0xf0) | chans[l]);
-            if (b.size() == 2)
-            {
-                w[l].Event(midi_tick, {b[0], b[1]});
-            }
-            else
-            {
-                w[l].Event(midi_tick, {b[0], b[1], b[2]});
-            }
+            b[0] = static_cast<uint8_t>((b[0] & 0xf0) | channels[l]);
+            layers[l].Event(midi_tick, b);
         }
     };
 
     // Set RPN 0 to `range` semitones, then select the null RPN to prevent later data entry messages from changing it.
-    std::vector<std::size_t> every(w.size());
-    for (std::size_t l = 0; l < w.size(); l++)
+    std::vector<std::size_t> every(layers.size());
+    for (std::size_t l = 0; l < layers.size(); l++)
     {
         every[l] = l;
     }
@@ -381,9 +432,9 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
     send(0, every, {0xb0, 101, 127});
     send(0, every, {0xb0, 100, 127});
 
-    std::vector<std::array<uint32_t, 128>> sounding(w.size()); // note id per key, 0: free
-    std::vector<std::array<uint32_t, 128>> since(w.size());    // that note's start time
-    std::map<uint32_t, std::size_t> layer_of;                  // note id -> writer
+    std::vector<std::array<uint32_t, 128>> sounding(layers.size()); // note id per key, 0: free
+    std::vector<std::array<uint32_t, 128>> since(layers.size());    // that note's start time
+    std::map<uint32_t, std::size_t> layer_of;                       // note id -> layer
     for (const TrackEvent& e : perf.tracks[t])
     {
         if (!plays[e.part])
@@ -398,25 +449,11 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
         {
         case EventKind::kNoteOn:
             {
-                auto free =
-                    std::find_if(mine.begin(), mine.end(), [&](std::size_t l) { return sounding[l][key] == 0; });
-                std::size_t l = 0;
-                if (free != mine.end())
+                // A note-on whose layers all have its key in use cuts the oldest of those notes.
+                const std::size_t l = LayerForNote(mine, sounding, since, key);
+                if (sounding[l][key] != 0)
                 {
-                    l = *free;
-                }
-                else
-                {
-                    l = mine[0];
-                    for (const std::size_t i : mine)
-                    {
-                        if (since[i][key] < since[l][key])
-                        {
-                            l = i;
-                        }
-                    }
-
-                    w[l].Event(at, {static_cast<uint8_t>(0x80 | chans[l]), key, 64});
+                    layers[l].Event(at, {static_cast<uint8_t>(0x80 | channels[l]), key, 64});
                     layer_of.erase(sounding[l][key]);
                     report.cut_notes++;
                 }
@@ -424,7 +461,7 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
                 sounding[l][key] = e.note;
                 since[l][key] = e.tick;
                 layer_of[e.note] = l;
-                w[l].Event(at, {static_cast<uint8_t>(0x90 | chans[l]), key, e.value});
+                layers[l].Event(at, {static_cast<uint8_t>(0x90 | channels[l]), key, e.value});
                 break;
             }
 
@@ -439,39 +476,27 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
                 const std::size_t l = it->second;
                 layer_of.erase(it);
                 sounding[l][key] = 0;
-                w[l].Event(at, {static_cast<uint8_t>(0x80 | chans[l]), key, 64});
+                layers[l].Event(at, {static_cast<uint8_t>(0x80 | channels[l]), key, 64});
                 break;
             }
 
         case EventKind::kPreset:
-            send(at, mine, {0xb0, 0, static_cast<uint8_t>((e.preset >> 7) & 0x7f)});
-            send(at, mine, {0xb0, 32, 0});
-            send(at, mine, {0xc0, static_cast<uint8_t>(e.preset & 0x7f)});
-            break;
+            {
+                send(at, mine, {0xb0, 0, static_cast<uint8_t>((e.preset >> 7) & 0x7f)});
+                send(at, mine, {0xb0, 32, 0});
+                send(at, mine, {0xc0, static_cast<uint8_t>(e.preset & 0x7f)});
 
-        case EventKind::kVolume:
-            send(at, mine, {0xb0, 7, e.value});
-            break;
-
-        case EventKind::kExpression:
-            send(at, mine, {0xb0, 11, e.value});
-            break;
-
-        case EventKind::kPan:
-            send(at, mine, {0xb0, 10, e.value});
-            break;
-
-        case EventKind::kModulation:
-            send(at, mine, {0xb0, 1, e.value});
-            break;
-
-        case EventKind::kReverb:
-            send(at, mine, {0xb0, 91, e.value});
-            break;
-
-        case EventKind::kChorus:
-            send(at, mine, {0xb0, 93, e.value});
-            break;
+                // Synths play bank 128 on the drum channel. sf2::AddChannel10Copy copies the preset there.
+                const auto on_drums = [&channels](std::size_t l)
+                {
+                    return channels[l] == kDrumChannel;
+                };
+                if (std::ranges::any_of(mine, on_drums))
+                {
+                    report.channel_10_presets.insert(e.preset);
+                }
+                break;
+            }
 
         case EventKind::kSoundOff:
             send(at, mine, {0xb0, 120, 0});
@@ -485,20 +510,20 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
             }
 
         default:
-            if (IsControlKind(e.kind))
+            if (const std::optional<uint8_t> controller = ControllerFor(e.kind))
             {
-                send(at, mine, {0xb0, ControllerOf(e.kind), e.value});
+                send(at, mine, {0xb0, *controller, e.value});
             }
             break;
         }
     }
 
-    for (TrackEncoder& x : w)
+    for (TrackEncoder& layer : layers)
     {
-        x.End(perf.end_tick * static_cast<uint64_t>(TickScale(perf)));
+        layer.End(perf.end_tick * static_cast<uint64_t>(TickScale(perf)));
     }
 
-    return w;
+    return layers;
 }
 
 } // namespace
@@ -513,27 +538,6 @@ std::vector<uint8_t> WriteMidi(const Performance& perf, const std::string& title
         for (const std::vector<int>& c : parts)
         {
             report.channels += static_cast<int>(c.size());
-        }
-    }
-
-    // Record the presets that the drum channel plays. sf2::AddChannel10Copy copies them to bank 128. A part with notes
-    // but no channel plays on the first part's channels. The events of a part without notes are dropped.
-    for (int t = 0; t < 16; t++)
-    {
-        const std::vector<bool> plays = PartsThatPlay(perf, t);
-        for (const TrackEvent& e : perf.tracks[t])
-        {
-            if (!plays[e.part])
-            {
-                continue;
-            }
-
-            const std::size_t p = e.part < channels[t].size() && !channels[t][e.part].empty() ? e.part : 0;
-            const std::vector<int>& c = channels[t][p];
-            if (e.kind == EventKind::kPreset && std::find(c.begin(), c.end(), kDrumChannel) != c.end())
-            {
-                report.channel_10_presets.insert(e.preset);
-            }
         }
     }
 

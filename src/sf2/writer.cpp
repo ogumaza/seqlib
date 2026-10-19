@@ -17,8 +17,8 @@ namespace seqlib::sf2
 namespace
 {
 
-// Zero padding required after each SoundFont sample.
-constexpr uint32_t kSamplePadding = 46;
+// The zero points that the format requires after each sample.
+constexpr uint32_t kZeroPoints = 46;
 
 // RIFF chunk buffer with little-endian numeric writes.
 struct Buffer
@@ -93,9 +93,9 @@ std::vector<uint8_t> ZString(const std::string& s)
     return v;
 }
 
-// Generator order: key range, velocity range, other generators, then instrument (preset zones) or sample (instrument
-// zones).
-int Rank(uint16_t oper, bool preset)
+// Generator order: key range, velocity range, other generators, then `last`, the generator that ends a zone: the
+// instrument in a preset zone, or the sample in an instrument zone.
+int Rank(uint16_t oper, uint16_t last)
 {
     if (oper == kKeyRange)
     {
@@ -105,7 +105,7 @@ int Rank(uint16_t oper, bool preset)
     {
         return 1;
     }
-    if (oper == (preset ? kInstrument : kSampleId))
+    if (oper == last)
     {
         return 3;
     }
@@ -116,7 +116,8 @@ int Rank(uint16_t oper, bool preset)
 // Writes the bag, modulator and generator lists of a set of zones.
 struct ZoneLists
 {
-    void Add(const Zone& zone, bool preset)
+    // Adds `zone`, whose generators end with `last` (see Rank).
+    void Add(const Zone& zone, uint16_t last)
     {
         bags.U16(static_cast<uint16_t>(gen_count));
         bags.U16(static_cast<uint16_t>(mod_count));
@@ -134,7 +135,7 @@ struct ZoneLists
 
         auto by_rank = [&](const Generator& a, const Generator& b)
         {
-            return Rank(a.oper, preset) < Rank(b.oper, preset);
+            return Rank(a.oper, last) < Rank(b.oper, last);
         };
         std::vector<Generator> g = zone.generators;
         std::stable_sort(g.begin(), g.end(), by_rank);
@@ -202,8 +203,8 @@ Buffer InfoList(const SoundFont& sf)
     return info;
 }
 
-// Writes sdta with 46 zero samples after each sample. Unless the options turn it off, includes padding even when there
-// are no samples. FluidSynth rejects SoundFonts with empty sample data.
+// Writes sdta with 46 zero points after each sample. Unless the options turn it off, writes the 46 points even when
+// there are no samples. FluidSynth rejects SoundFonts with empty sample data.
 Buffer SdtaList(const SoundFont& sf, const WriteOptions& options)
 {
     Buffer smpl;
@@ -213,7 +214,7 @@ Buffer SdtaList(const SoundFont& sf, const WriteOptions& options)
         {
             smpl.U16(static_cast<uint16_t>(v));
         }
-        for (uint32_t i = 0; i < kSamplePadding; i++)
+        for (uint32_t i = 0; i < kZeroPoints; i++)
         {
             smpl.U16(0);
         }
@@ -221,7 +222,7 @@ Buffer SdtaList(const SoundFont& sf, const WriteOptions& options)
 
     if (sf.samples.empty() && options.pad_empty_sample_data)
     {
-        smpl.data.resize(kSamplePadding * 2);
+        smpl.data.resize(kZeroPoints * 2);
     }
 
     Buffer sdta;
@@ -253,52 +254,69 @@ std::vector<const Preset*> PresetOrder(const SoundFont& sf, const WriteOptions& 
     return order;
 }
 
-// Writes pdta: preset, instrument and sample headers, plus zone bags, modulators and generators.
-Buffer PdtaList(const SoundFont& sf, const WriteOptions& options)
+// Appends a preset header: the preset's name, program and bank, the index of its first zone, and three reserved
+// fields (library, genre and morphology).
+void AppendPresetHeader(Buffer& phdr, const std::string& name, uint16_t program, uint16_t bank, uint32_t first_zone)
+{
+    phdr.Name(name);
+    phdr.U16(program);
+    phdr.U16(bank);
+    phdr.U16(static_cast<uint16_t>(first_zone));
+    phdr.U32(0);
+    phdr.U32(0);
+    phdr.U32(0);
+}
+
+// The preset headers (phdr), in the order that PresetOrder gives, and the terminal record EOP. The presets' zones go to
+// `zones`.
+Buffer PresetHeaders(const SoundFont& sf, const WriteOptions& options, ZoneLists& zones)
 {
     Buffer phdr;
-    ZoneLists pz;
     for (const Preset* p : PresetOrder(sf, options))
     {
-        phdr.Name(p->name);
-        phdr.U16(p->program);
-        phdr.U16(p->bank);
-        phdr.U16(static_cast<uint16_t>(pz.bag_count));
-        phdr.U32(0);
-        phdr.U32(0);
-        phdr.U32(0);
+        AppendPresetHeader(phdr, p->name, p->program, p->bank, zones.bag_count);
         for (const Zone& z : p->zones)
         {
-            pz.Add(z, true);
+            zones.Add(z, kInstrument);
         }
     }
 
-    phdr.Name("EOP");
-    phdr.U16(0);
-    phdr.U16(0);
-    phdr.U16(static_cast<uint16_t>(pz.bag_count));
-    phdr.U32(0);
-    phdr.U32(0);
-    phdr.U32(0);
-    pz.Terminate();
+    AppendPresetHeader(phdr, "EOP", 0, 0, zones.bag_count);
+    zones.Terminate();
 
+    return phdr;
+}
+
+// Appends an instrument header: the instrument's name and the index of its first zone.
+void AppendInstrumentHeader(Buffer& inst, const std::string& name, uint32_t first_zone)
+{
+    inst.Name(name);
+    inst.U16(static_cast<uint16_t>(first_zone));
+}
+
+// The instrument headers (inst) and the terminal record EOI. The instruments' zones go to `zones`.
+Buffer InstrumentHeaders(const SoundFont& sf, ZoneLists& zones)
+{
     Buffer inst;
-    ZoneLists iz;
     for (const Instrument& i : sf.instruments)
     {
-        inst.Name(i.name);
-        inst.U16(static_cast<uint16_t>(iz.bag_count));
+        AppendInstrumentHeader(inst, i.name, zones.bag_count);
         for (const Zone& z : i.zones)
         {
-            iz.Add(z, false);
+            zones.Add(z, kSampleId);
         }
     }
 
-    inst.Name("EOI");
-    inst.U16(static_cast<uint16_t>(iz.bag_count));
-    iz.Terminate();
+    AppendInstrumentHeader(inst, "EOI", zones.bag_count);
+    zones.Terminate();
 
-    // Positions are sample offsets within smpl. They follow the layout in SdtaList.
+    return inst;
+}
+
+// The sample headers (shdr) and the terminal record EOS. Positions are sample offsets within smpl. They follow the
+// layout in SdtaList.
+Buffer SampleHeaders(const SoundFont& sf)
+{
     Buffer shdr;
     uint32_t start = 0;
     for (const Sample& s : sf.samples)
@@ -313,7 +331,7 @@ Buffer PdtaList(const SoundFont& sf, const WriteOptions& options)
         shdr.U8(0); // pitch correction
         shdr.U16(s.link);
         shdr.U16(s.type);
-        start += static_cast<uint32_t>(s.data.size()) + kSamplePadding;
+        start += static_cast<uint32_t>(s.data.size()) + kZeroPoints;
     }
 
     shdr.Name("EOS");
@@ -326,16 +344,29 @@ Buffer PdtaList(const SoundFont& sf, const WriteOptions& options)
     shdr.U16(0);
     shdr.U16(0);
 
+    return shdr;
+}
+
+// Writes pdta: the preset, instrument and sample headers, and the bags, modulators and generators of the presets' and
+// the instruments' zones.
+Buffer PdtaList(const SoundFont& sf, const WriteOptions& options)
+{
+    ZoneLists preset_zones;
+    const Buffer phdr = PresetHeaders(sf, options, preset_zones);
+    ZoneLists instrument_zones;
+    const Buffer inst = InstrumentHeaders(sf, instrument_zones);
+    const Buffer shdr = SampleHeaders(sf);
+
     Buffer pdta;
     pdta.Fourcc("pdta");
     pdta.Chunk("phdr", phdr.data);
-    pdta.Chunk("pbag", pz.bags.data);
-    pdta.Chunk("pmod", pz.mods.data);
-    pdta.Chunk("pgen", pz.gens.data);
+    pdta.Chunk("pbag", preset_zones.bags.data);
+    pdta.Chunk("pmod", preset_zones.mods.data);
+    pdta.Chunk("pgen", preset_zones.gens.data);
     pdta.Chunk("inst", inst.data);
-    pdta.Chunk("ibag", iz.bags.data);
-    pdta.Chunk("imod", iz.mods.data);
-    pdta.Chunk("igen", iz.gens.data);
+    pdta.Chunk("ibag", instrument_zones.bags.data);
+    pdta.Chunk("imod", instrument_zones.mods.data);
+    pdta.Chunk("igen", instrument_zones.gens.data);
     pdta.Chunk("shdr", shdr.data);
 
     return pdta;

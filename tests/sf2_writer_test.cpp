@@ -12,6 +12,7 @@
 
 #include "seqlib/sf2/writer.h"
 #include "test.h"
+#include "test_data.h"
 
 namespace seqlib::test
 {
@@ -87,17 +88,6 @@ constexpr char kSortedEmptyGolden[] =
     "696e737416000000454f4900000000000000000000000000000000000000696261670400000000000000696d6f640a0000000000"
     "00000000000000006967656e0400000000000000736864722e000000454f53000000000000000000000000000000000000000000"
     "00000000000000000000000000000000000000000000";
-
-std::vector<uint8_t> FromHex(const char* hex)
-{
-    std::vector<uint8_t> bytes;
-    for (const char* p = hex; p[0] && p[1]; p += 2)
-    {
-        bytes.push_back(static_cast<uint8_t>(std::stoi(std::string(p, 2), nullptr, 16)));
-    }
-
-    return bytes;
-}
 
 // Stereo links, global zones in an instrument and a preset, modulators with and without an amount source, generators
 // and presets out of order, a name longer than 19 characters, and odd and even lengths. The INFO fields are INAM, ICMT

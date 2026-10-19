@@ -41,10 +41,17 @@ std::optional<std::vector<uint8_t>> ReadFile(const std::filesystem::path& path)
     return bytes;
 }
 
+// Returns `path` as UTF-8 text.
+std::string Utf8(const std::filesystem::path& path)
+{
+    const std::u8string text = path.u8string();
+    return std::string(text.begin(), text.end());
+}
+
 // Returns the problems of the file at `path`, by its extension.
 std::vector<std::string> FileProblems(const std::filesystem::path& path)
 {
-    std::string extension = path.extension().string();
+    std::string extension = Utf8(path.extension());
     std::transform(extension.begin(), extension.end(), extension.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (extension != ".sf2" && extension != ".mid" && extension != ".midi")
@@ -63,7 +70,13 @@ std::vector<std::string> FileProblems(const std::filesystem::path& path)
 
 } // namespace
 
+// On Windows, the wide command line holds every name as it is. The narrow one holds only the characters of the ANSI
+// code page. The names print as UTF-8.
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv)
+#else
 int main(int argc, char** argv)
+#endif
 {
     if (argc < 2)
     {
@@ -74,14 +87,15 @@ int main(int argc, char** argv)
     int bad = 0;
     for (int i = 1; i < argc; i++)
     {
-        const std::vector<std::string> problems = FileProblems(argv[i]);
+        const std::filesystem::path path(argv[i]);
+        const std::vector<std::string> problems = FileProblems(path);
         if (problems.empty())
         {
             continue;
         }
 
         bad++;
-        std::printf("%s\n", argv[i]);
+        std::printf("%s\n", Utf8(path).c_str());
         for (const std::string& problem : problems)
         {
             std::printf("  %s\n", problem.c_str());

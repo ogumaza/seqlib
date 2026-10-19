@@ -10,6 +10,31 @@
 
 namespace seqlib::midi
 {
+namespace
+{
+
+// Part `part`, or with a negative `part` the part that the track's new notes go to.
+uint8_t PartOf(const TrackOutput& output, int part)
+{
+    return static_cast<uint8_t>(part >= 0 ? part : output.part);
+}
+
+// Stores `value` as part `part`'s last value of `kind` in `output`. Returns false, and stores nothing, when that's the
+// last value already.
+bool StoreSent(TrackOutput& output, uint8_t part, EventKind kind, int value)
+{
+    const auto sent = output.sent.find({part, kind});
+    if (sent != output.sent.end() && sent->second == value)
+    {
+        return false;
+    }
+
+    output.sent[{part, kind}] = value;
+
+    return true;
+}
+
+} // namespace
 
 bool IsSetting(EventKind kind)
 {
@@ -38,7 +63,7 @@ const RecorderOptions& Recorder::Options() const
 void Recorder::Emit(Performance& perf, const TrackOutput& output, uint32_t tick, TrackEvent e, int part) const
 {
     e.tick = tick;
-    e.part = static_cast<uint8_t>(part >= 0 ? part : output.part);
+    e.part = PartOf(output, part);
     std::vector<TrackEvent>& events = perf.tracks[output.midi_track];
     if (!IsSetting(e.kind) || e.after != 0)
     {
@@ -89,14 +114,12 @@ void Recorder::Emit(Performance& perf, const TrackOutput& output, uint32_t tick,
 bool Recorder::SendSetting(Performance& perf, TrackOutput& output, uint32_t tick, EventKind kind, uint8_t value,
                            int part) const
 {
-    const uint8_t on = static_cast<uint8_t>(part >= 0 ? part : output.part);
-    const auto sent = output.sent.find({on, kind});
-    if (sent != output.sent.end() && sent->second == value)
+    const uint8_t on = PartOf(output, part);
+    if (!StoreSent(output, on, kind, value))
     {
         return false;
     }
 
-    output.sent[{on, kind}] = value;
     TrackEvent e;
     e.kind = kind;
     e.value = value;
@@ -107,13 +130,11 @@ bool Recorder::SendSetting(Performance& perf, TrackOutput& output, uint32_t tick
 
 bool Recorder::SendPreset(Performance& perf, TrackOutput& output, uint32_t tick, uint32_t preset) const
 {
-    const auto sent = output.sent.find({output.part, EventKind::kPreset});
-    if (sent != output.sent.end() && sent->second == static_cast<int>(preset))
+    if (!StoreSent(output, output.part, EventKind::kPreset, static_cast<int>(preset)))
     {
         return false;
     }
 
-    output.sent[{output.part, EventKind::kPreset}] = static_cast<int>(preset);
     TrackEvent e;
     e.kind = EventKind::kPreset;
     e.preset = preset;
@@ -125,13 +146,16 @@ bool Recorder::SendPreset(Performance& perf, TrackOutput& output, uint32_t tick,
 bool Recorder::SendPitch(Performance& perf, TrackOutput& output, uint32_t tick, float semitones, int part,
                          double after) const
 {
-    const uint8_t on = static_cast<uint8_t>(part >= 0 ? part : output.part);
+    // The part's last pitch: 0 without an entry, and unknown with an empty one. A pitch goes out when the last one is
+    // unknown, when it has moved by more than the tolerance, and when it returns to exactly 0.
+    const uint8_t on = PartOf(output, part);
     const auto sent = output.pitch.find(on);
-    if (sent == output.pitch.end() || sent->second)
+    const std::optional<float> last = sent == output.pitch.end() ? std::optional<float>(0.0f) : sent->second;
+    if (last)
     {
-        const float last = sent != output.pitch.end() ? *sent->second : 0.0f;
-        const bool moved = std::fabs(semitones - last) > options_.pitch_tolerance;
-        if (!moved && !(semitones != last && semitones == 0.0f))
+        const bool moved = std::fabs(semitones - *last) > options_.pitch_tolerance;
+        const bool back_to_zero = semitones == 0.0f && *last != 0.0f;
+        if (!moved && !back_to_zero)
         {
             return false;
         }
@@ -152,7 +176,7 @@ void Recorder::SwitchTo(Performance& perf, TrackOutput& output, uint32_t tick, u
     const uint8_t old = output.part;
     output.part = part;
     part_switches_.emplace_back(tick, output.midi_track, part);
-    parts_used_[output.midi_track] = std::max<uint8_t>(parts_used_[output.midi_track], static_cast<uint8_t>(part + 1));
+    MarkUsed(output.midi_track, part);
     if (!options_.resend_on_switch)
     {
         std::erase_if(output.sent, [part](const auto& sent) { return sent.first.first == part; });
@@ -197,6 +221,11 @@ void Recorder::SwitchTo(Performance& perf, TrackOutput& output, uint32_t tick, u
     }
 }
 
+void Recorder::MarkUsed(uint8_t midi_track, uint8_t part)
+{
+    parts_used_[midi_track] = std::max<uint8_t>(parts_used_[midi_track], static_cast<uint8_t>(part + 1));
+}
+
 uint32_t Recorder::NextNote() const
 {
     return next_note_;
@@ -210,8 +239,7 @@ uint32_t Recorder::NoteOn(Performance& perf, const TrackOutput& output, uint32_t
     e.value = velocity;
     e.note = next_note_++;
     Emit(perf, output, tick, e);
-    parts_used_[output.midi_track] =
-        std::max<uint8_t>(parts_used_[output.midi_track], static_cast<uint8_t>(output.part + 1));
+    MarkUsed(output.midi_track, output.part);
 
     return e.note;
 }

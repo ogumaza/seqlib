@@ -2,7 +2,7 @@
 
 cmake_minimum_required(VERSION 3.20)
 
-project(seqlib VERSION 1.1.0 DESCRIPTION "MIDI, SoundFont 2 and SFZ files" LANGUAGES CXX)
+project(seqlib VERSION 1.2.0 DESCRIPTION "MIDI, SoundFont 2 and SFZ files" LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
@@ -125,6 +125,12 @@ if(SEQLIB_BUILD_TOOLS)
   add_executable(seqlib_check tools/seqlib_check.cpp)
   target_link_libraries(seqlib_check PRIVATE seqlib::seqlib)
   seqlib_set_flags(seqlib_check)
+  if(SEQLIB_BUILD_TESTS)
+    # seqlib_check reads a file whose name has characters outside most ANSI code pages.
+    add_test(NAME seqlib_check_names
+      COMMAND ${CMAKE_COMMAND} -DSEQLIB_CHECK=$<TARGET_FILE:seqlib_check> -DFOLDER=${CMAKE_CURRENT_BINARY_DIR}
+              -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_names.cmake)
+  endif()
 endif()
 
 if(SEQLIB_INSTALL)

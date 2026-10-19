@@ -12,6 +12,7 @@
 
 #include "bytes.h"
 #include "seqlib/read_error.h"
+#include "seqlib/sf2/soundfont.h"
 
 namespace seqlib::sf2
 {
@@ -21,17 +22,52 @@ namespace
 using detail::LoadLe16;
 using detail::LoadLe32;
 
+// The sizes of the pdta chunks' records: a preset header (phdr), a bag (pbag and ibag), a modulator (pmod and imod), a
+// generator (pgen and igen), an instrument header (inst) and a sample header (shdr).
+constexpr std::size_t kPresetHeaderSize = 38;
+constexpr std::size_t kBagSize = 4;
+constexpr std::size_t kModulatorSize = 10;
+constexpr std::size_t kGeneratorSize = 4;
+constexpr std::size_t kInstrumentHeaderSize = 22;
+constexpr std::size_t kSampleHeaderSize = 46;
+
 // The pdta chunks and the size of their records.
 constexpr std::pair<const char*, std::size_t> kRecordSizes[] = {
-    {"phdr", 38}, {"pbag", 4},  {"pmod", 10}, {"pgen", 4},  {"inst", 22},
-    {"ibag", 4},  {"imod", 10}, {"igen", 4},  {"shdr", 46},
+    {"phdr", kPresetHeaderSize},     {"pbag", kBagSize}, {"pmod", kModulatorSize}, {"pgen", kGeneratorSize},
+    {"inst", kInstrumentHeaderSize}, {"ibag", kBagSize}, {"imod", kModulatorSize}, {"igen", kGeneratorSize},
+    {"shdr", kSampleHeaderSize},
 };
-
-// Generator operators that the check looks for.
-constexpr uint16_t kInstrument = 41, kKeyRange = 43, kVelRange = 44, kSampleId = 53, kSampleModes = 54;
 
 // Zero points that every sample has after its end.
 constexpr uint32_t kZeroPoints = 46;
+
+// The fields of a sample header (shdr) record after its name: where the sample and its loop lie among the smpl chunk's
+// points, its rate, the other sample of a stereo pair, and its type.
+struct SampleHeader
+{
+    uint32_t start = 0;
+    uint32_t end = 0;
+    uint32_t loop_start = 0;
+    uint32_t loop_end = 0;
+    uint32_t rate = 0;
+    uint16_t link = 0;
+    uint16_t type = 0;
+};
+
+// Reads the sample header record at `record`.
+SampleHeader ReadSampleHeader(const uint8_t* record)
+{
+    SampleHeader header;
+    header.start = LoadLe32(record + 20);
+    header.end = LoadLe32(record + 24);
+    header.loop_start = LoadLe32(record + 28);
+    header.loop_end = LoadLe32(record + 32);
+    header.rate = LoadLe32(record + 36);
+    header.link = LoadLe16(record + 42);
+    header.type = LoadLe16(record + 44);
+
+    return header;
+}
 
 std::string Id(std::span<const uint8_t> d, std::size_t o)
 {
@@ -107,11 +143,28 @@ Lists ReadLists(std::span<const uint8_t> d, std::vector<std::string>* problems)
     return lists;
 }
 
+// The records of the presets' zones or of the instruments' zones: the headers, and where in a header the index of its
+// first bag is, the bags, the generators, the generator that ends each zone but a global one, the chunk whose records
+// that generator indexes, and what the messages call a header.
+struct ZoneRecords
+{
+    const char* headers;
+    std::size_t first_bag;
+    const char* bags;
+    const char* generators;
+    uint16_t last;
+    const char* targets;
+    const char* what;
+};
+
+constexpr ZoneRecords kPresetZones = {"phdr", 24, "pbag", "pgen", kInstrument, "inst", "preset"};
+constexpr ZoneRecords kInstrumentZones = {"inst", 20, "ibag", "igen", kSampleId, "shdr", "instrument"};
+
 // The checks of Check(), on lists that ReadLists has read.
 class Checker
 {
 public:
-    Checker(const Lists& lists, std::vector<std::string>& errors) : lists_(lists), errors_(errors)
+    Checker(const Lists& lists, std::vector<std::string>& problems) : lists_(lists), problems_(problems)
     {
     }
 
@@ -121,7 +174,7 @@ public:
         {
             if (!lists_.contains(name))
             {
-                errors_.push_back(std::string("missing LIST ") + name);
+                problems_.push_back(std::string("missing LIST ") + name);
                 return;
             }
         }
@@ -129,11 +182,11 @@ public:
         const auto& info = lists_.at("INFO");
         if (!info.contains("ifil") || !info.contains("isng") || !info.contains("INAM"))
         {
-            errors_.push_back("INFO lacks ifil, isng or INAM");
+            problems_.push_back("INFO lacks ifil, isng or INAM");
         }
         if (!lists_.at("sdta").contains("smpl"))
         {
-            errors_.push_back("missing smpl");
+            problems_.push_back("missing smpl");
             return;
         }
 
@@ -144,8 +197,8 @@ public:
         }
 
         CheckTerminals();
-        Zones("phdr", 24, "pbag", "pgen", kInstrument, Count("inst") - 1, "preset");
-        Zones("inst", 20, "ibag", "igen", kSampleId, Count("shdr") - 1, "instrument");
+        CheckZones(kPresetZones);
+        CheckZones(kInstrumentZones);
         CheckPresets();
         CheckSamples();
         CheckLoopPadding();
@@ -160,15 +213,15 @@ private:
         {
             if (!pdta.contains(name))
             {
-                errors_.push_back(std::string("missing ") + name);
+                problems_.push_back(std::string("missing ") + name);
                 return false;
             }
 
             const std::span<const uint8_t> chunk = pdta.at(name);
             if (chunk.size() % size != 0)
             {
-                errors_.push_back(std::string(name) + " size " + std::to_string(chunk.size()) +
-                                  " isn't a multiple of " + std::to_string(size));
+                problems_.push_back(std::string(name) + " size " + std::to_string(chunk.size()) +
+                                    " isn't a multiple of " + std::to_string(size));
             }
             records_[name] = {chunk, size};
         }
@@ -177,7 +230,7 @@ private:
         {
             if (Count(name) == 0)
             {
-                errors_.push_back(std::string(name) + " has no records");
+                problems_.push_back(std::string(name) + " has no records");
                 return false;
             }
         }
@@ -209,95 +262,105 @@ private:
         if (Name("phdr", Count("phdr") - 1) != "EOP" || Name("inst", Count("inst") - 1) != "EOI" ||
             Name("shdr", Count("shdr") - 1) != "EOS")
         {
-            errors_.push_back("missing terminal records");
+            problems_.push_back("missing terminal records");
         }
 
         const uint8_t* pbag = At("pbag", Count("pbag") - 1);
         const uint8_t* ibag = At("ibag", Count("ibag") - 1);
         if (LoadLe16(pbag) != Count("pgen") - 1 || LoadLe16(ibag) != Count("igen") - 1)
         {
-            errors_.push_back("terminal bag doesn't point at the terminal generator");
+            problems_.push_back("terminal bag doesn't point at the terminal generator");
         }
         if (LoadLe16(pbag + 2) + std::size_t{1} != Count("pmod") ||
             LoadLe16(ibag + 2) + std::size_t{1} != Count("imod"))
         {
-            errors_.push_back("terminal bag doesn't point at the terminal modulator");
+            problems_.push_back("terminal bag doesn't point at the terminal modulator");
         }
     }
 
     // Checks the zones of the presets or the instruments: the order of their generators, and the index that each zone
     // but a global one ends with.
-    void Zones(const std::string& headers, std::size_t bag_field, const std::string& bags, const std::string& gens,
-               uint16_t terminal, std::size_t limit, const std::string& what)
+    void CheckZones(const ZoneRecords& records)
     {
-        for (std::size_t i = 0; i + 1 < Count(headers); i++)
+        for (std::size_t i = 0; i + 1 < Count(records.headers); i++)
         {
-            const uint16_t b0 = LoadLe16(At(headers, i) + bag_field), b1 = LoadLe16(At(headers, i + 1) + bag_field);
+            const uint16_t b0 = LoadLe16(At(records.headers, i) + records.first_bag);
+            const uint16_t b1 = LoadLe16(At(records.headers, i + 1) + records.first_bag);
+            const std::string header = std::string(records.what) + " " + std::to_string(i);
             if (b1 < b0)
             {
-                errors_.push_back(what + " " + std::to_string(i) + ": bag indexes go backwards");
+                problems_.push_back(header + ": bag indexes go backwards");
                 continue;
             }
 
             for (uint16_t b = b0; b < b1; b++)
             {
-                const std::string zone = what + " " + std::to_string(i) + " zone " + std::to_string(b - b0);
-                if (b + 1u >= Count(bags))
+                const std::string zone = header + " zone " + std::to_string(b - b0);
+                if (b + 1u >= Count(records.bags))
                 {
-                    errors_.push_back(zone + ": bag index out of range");
+                    problems_.push_back(zone + ": bag index out of range");
                     break;
                 }
 
-                const uint16_t g0 = LoadLe16(At(bags, b)), g1 = LoadLe16(At(bags, b + 1u));
-                if (g1 > Count(gens))
+                const uint16_t g0 = LoadLe16(At(records.bags, b)), g1 = LoadLe16(At(records.bags, b + 1u));
+                if (g1 > Count(records.generators))
                 {
-                    errors_.push_back(zone + ": generator index out of range");
+                    problems_.push_back(zone + ": generator index out of range");
                     continue;
                 }
 
-                std::vector<uint16_t> opers;
+                std::vector<std::pair<uint16_t, uint16_t>> generators;
                 for (uint16_t g = g0; g < g1; g++)
                 {
-                    opers.push_back(LoadLe16(At(gens, g)));
+                    const uint8_t* generator = At(records.generators, g);
+                    generators.emplace_back(LoadLe16(generator), LoadLe16(generator + 2));
                 }
-                CheckZone(opers, g0, gens, terminal, limit, b == b0, zone);
+                CheckZone(records, generators, b == b0, zone);
             }
         }
     }
 
-    void CheckZone(const std::vector<uint16_t>& opers, uint16_t g0, const std::string& gens, uint16_t terminal,
-                   std::size_t limit, bool first, const std::string& zone)
+    // Checks the order of a zone's generators, given as operators and amounts, and the index that the zone ends with.
+    // Only a header's first zone can be global, without that index.
+    void CheckZone(const ZoneRecords& records, const std::vector<std::pair<uint16_t, uint16_t>>& generators, bool first,
+                   const std::string& zone)
     {
-        const auto index = [&opers](uint16_t oper)
+        const auto index = [&generators](uint16_t oper)
         {
-            return static_cast<std::size_t>(std::find(opers.begin(), opers.end(), oper) - opers.begin());
+            const auto is_oper = [oper](const std::pair<uint16_t, uint16_t>& generator)
+            {
+                return generator.first == oper;
+            };
+            return static_cast<std::size_t>(std::find_if(generators.begin(), generators.end(), is_oper) -
+                                            generators.begin());
         };
-        const std::size_t key_range = index(kKeyRange), vel_range = index(kVelRange), last = index(terminal);
-        if (key_range < opers.size() && key_range != 0)
+        const std::size_t key_range = index(kKeyRange), vel_range = index(kVelRange), last = index(records.last);
+        if (key_range < generators.size() && key_range != 0)
         {
-            errors_.push_back(zone + ": keyRange isn't first");
+            problems_.push_back(zone + ": keyRange isn't first");
         }
-        if (vel_range < opers.size() && vel_range > (key_range < opers.size() ? 1u : 0u))
+        if (vel_range < generators.size() && vel_range > (key_range < generators.size() ? 1u : 0u))
         {
-            errors_.push_back(zone + ": velRange out of place");
+            problems_.push_back(zone + ": velRange out of place");
         }
 
-        if (last < opers.size())
+        if (last < generators.size())
         {
-            if (last != opers.size() - 1)
+            if (last != generators.size() - 1)
             {
-                errors_.push_back(zone + ": generator " + std::to_string(terminal) + " isn't last");
+                problems_.push_back(zone + ": generator " + std::to_string(records.last) + " isn't last");
             }
 
-            const uint16_t target = LoadLe16(At(gens, g0 + last) + 2);
-            if (target >= limit)
+            // The last record of the targets' chunk is the terminal record. No zone may name it.
+            const uint16_t target = generators[last].second;
+            if (target >= Count(records.targets) - 1)
             {
-                errors_.push_back(zone + ": index " + std::to_string(target) + " out of range");
+                problems_.push_back(zone + ": index " + std::to_string(target) + " out of range");
             }
         }
         else if (!first)
         {
-            errors_.push_back(zone + ": missing " + std::to_string(terminal) + " in a non-global zone");
+            problems_.push_back(zone + ": missing " + std::to_string(records.last) + " in a non-global zone");
         }
     }
 
@@ -309,8 +372,8 @@ private:
             const uint16_t program = LoadLe16(At("phdr", i) + 20), bank = LoadLe16(At("phdr", i) + 22);
             if (!presets.insert({bank, program}).second)
             {
-                errors_.push_back("duplicate preset bank " + std::to_string(bank) + " program " +
-                                  std::to_string(program));
+                problems_.push_back("duplicate preset bank " + std::to_string(bank) + " program " +
+                                    std::to_string(program));
             }
         }
     }
@@ -321,44 +384,53 @@ private:
         const std::size_t samples = Count("shdr") - 1;
         for (std::size_t i = 0; i < samples; i++)
         {
-            const uint8_t* s = At("shdr", i);
-            const uint32_t start = LoadLe32(s + 20), end = LoadLe32(s + 24), loop_start = LoadLe32(s + 28),
-                           loop_end = LoadLe32(s + 32);
-            const uint32_t rate = LoadLe32(s + 36);
-            const uint16_t link = LoadLe16(s + 42), type = LoadLe16(s + 44);
+            const SampleHeader s = ReadSampleHeader(At("shdr", i));
             const std::string sample = "sample " + std::to_string(i);
-            if (!(start < end && end <= points))
+            if (!(s.start < s.end && s.end <= points))
             {
-                errors_.push_back(sample + ": bounds " + std::to_string(start) + "-" + std::to_string(end) +
-                                  " outside " + std::to_string(points));
+                problems_.push_back(sample + ": bounds " + std::to_string(s.start) + "-" + std::to_string(s.end) +
+                                    " outside " + std::to_string(points));
             }
-            if (!ZerosAfter(end))
+            if (!ZerosAfter(s.end))
             {
-                errors_.push_back(sample + ": not followed by 46 zero samples");
+                problems_.push_back(sample + ": not followed by 46 zero samples");
             }
-            if (loop_end > loop_start && !(start <= loop_start && loop_end <= end))
+            if (s.loop_end > s.loop_start && !(s.start <= s.loop_start && s.loop_end <= s.end))
             {
-                errors_.push_back(sample + ": loop " + std::to_string(loop_start) + "-" + std::to_string(loop_end) +
-                                  " outside " + std::to_string(start) + "-" + std::to_string(end));
+                problems_.push_back(sample + ": loop " + std::to_string(s.loop_start) + "-" +
+                                    std::to_string(s.loop_end) + " outside " + std::to_string(s.start) + "-" +
+                                    std::to_string(s.end));
             }
 
-            if (type == 2 || type == 4)
+            if (s.type == kRight || s.type == kLeft)
             {
-                if (link >= samples || LoadLe16(At("shdr", link) + 44) != 6 - type ||
-                    LoadLe16(At("shdr", link) + 42) != i)
+                if (!LinksBack(i, s, samples))
                 {
-                    errors_.push_back(sample + ": stereo link broken");
+                    problems_.push_back(sample + ": stereo link broken");
                 }
             }
-            else if (type != 1)
+            else if (s.type != kMono)
             {
-                errors_.push_back(sample + ": type " + std::to_string(type));
+                problems_.push_back(sample + ": type " + std::to_string(s.type));
             }
-            if (rate < 400 || rate > 200000)
+            if (s.rate < 400 || s.rate > 200000)
             {
-                errors_.push_back(sample + ": rate " + std::to_string(rate));
+                problems_.push_back(sample + ": rate " + std::to_string(s.rate));
             }
         }
+    }
+
+    // Returns true if the stereo sample `i`, whose header is `header`, links to one of the first `samples` samples, and
+    // that sample links back to sample `i` with the other side's type.
+    bool LinksBack(std::size_t i, const SampleHeader& header, std::size_t samples) const
+    {
+        if (header.link >= samples)
+        {
+            return false;
+        }
+
+        const SampleHeader other = ReadSampleHeader(At("shdr", header.link));
+        return other.type == kLeft + kRight - header.type && other.link == i;
     }
 
     // Returns true if 46 zero points follow point `end` of the sample data.
@@ -394,20 +466,22 @@ private:
                     continue;
                 }
 
-                const uint8_t* s = At("shdr", gens[kSampleId]);
-                const int64_t start = LoadLe32(s + 20), end = LoadLe32(s + 24), loop_start = LoadLe32(s + 28),
-                              loop_end = LoadLe32(s + 32);
-                if (loop_start - start < 8 || end - loop_end < 8 || loop_end - loop_start < 32)
+                // The points before and after the loop, and the loop's length. A broken header can make them negative.
+                const SampleHeader s = ReadSampleHeader(At("shdr", gens[kSampleId]));
+                const int64_t before = int64_t{s.loop_start} - s.start;
+                const int64_t after = int64_t{s.end} - s.loop_end;
+                const int64_t length = int64_t{s.loop_end} - s.loop_start;
+                if (before < 8 || after < 8 || length < 32)
                 {
-                    errors_.push_back("instrument " + std::to_string(i) + ": looping sample " +
-                                      std::to_string(gens[kSampleId]) + " breaks the 8/32/8 rule");
+                    problems_.push_back("instrument " + std::to_string(i) + ": looping sample " +
+                                        std::to_string(gens[kSampleId]) + " breaks the 8/32/8 rule");
                 }
             }
         }
     }
 
     const Lists& lists_;
-    std::vector<std::string>& errors_;
+    std::vector<std::string>& problems_;
     std::span<const uint8_t> smpl_;
     std::map<std::string, std::pair<std::span<const uint8_t>, std::size_t>> records_;
 };
@@ -433,11 +507,11 @@ std::size_t Records::Count(const std::string& chunk, std::size_t size) const
 
 int Records::SamplePeak(std::size_t sample) const
 {
-    const uint8_t* header = Record("shdr", 46, sample);
+    const SampleHeader header = ReadSampleHeader(Record("shdr", kSampleHeaderSize, sample));
     const std::vector<uint8_t>& points = chunks.at("smpl");
-    const std::size_t end = std::min<std::size_t>(LoadLe32(header + 24), points.size() / 2);
+    const std::size_t end = std::min<std::size_t>(header.end, points.size() / 2);
     int peak = 0;
-    for (std::size_t i = LoadLe32(header + 20); i < end; i++)
+    for (std::size_t i = header.start; i < end; i++)
     {
         peak = std::max(peak, std::abs(static_cast<int>(static_cast<int16_t>(LoadLe16(&points[2 * i])))));
     }
@@ -448,10 +522,12 @@ int Records::SamplePeak(std::size_t sample) const
 std::map<uint16_t, uint16_t> Records::ZoneGens(std::size_t zone) const
 {
     std::map<uint16_t, uint16_t> gens;
-    const uint16_t first = LoadLe16(Record("ibag", 4, zone)), last = LoadLe16(Record("ibag", 4, zone + 1));
+    const uint16_t first = LoadLe16(Record("ibag", kBagSize, zone));
+    const uint16_t last = LoadLe16(Record("ibag", kBagSize, zone + 1));
     for (uint16_t g = first; g < last; g++)
     {
-        gens[LoadLe16(Record("igen", 4, g))] = LoadLe16(Record("igen", 4, g) + 2);
+        const uint8_t* generator = Record("igen", kGeneratorSize, g);
+        gens[LoadLe16(generator)] = LoadLe16(generator + 2);
     }
 
     return gens;
@@ -473,21 +549,21 @@ Records Read(std::span<const uint8_t> data)
 
 std::vector<std::string> Check(std::span<const uint8_t> data)
 {
-    std::vector<std::string> errors;
+    std::vector<std::string> problems;
     Lists lists;
     try
     {
-        lists = ReadLists(data, &errors);
+        lists = ReadLists(data, &problems);
     }
     catch (const ReadError& e)
     {
-        errors.push_back(e.what());
-        return errors;
+        problems.push_back(e.what());
+        return problems;
     }
 
-    Checker(lists, errors).Run();
+    Checker(lists, problems).Run();
 
-    return errors;
+    return problems;
 }
 
 } // namespace seqlib::sf2

@@ -5,6 +5,7 @@
 
 #include "test.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <sstream>
 #include <stdexcept>
@@ -93,18 +94,22 @@ void ThrowIf(bool fail)
 
 SEQLIB_TEST(testing, CheckGivesItsResult)
 {
+    // A failure gives the file and the line of the call.
     bool passed = false;
     bool failed = true;
+    int line = 0;
     const Captured c = Capture(
         [&]
         {
             passed = seqlib::testing::Check(true, "never shown");
+            line = __LINE__ + 1;
             failed = seqlib::testing::Check(false, "case 3 of 7");
         });
 
     SEQLIB_CHECK(passed && !failed);
     SEQLIB_CHECK(c.checks == 2 && c.failures == 1);
-    SEQLIB_CHECK(c.text == "CHECK failed: case 3 of 7\n");
+    SEQLIB_CHECK(c.text.ends_with("testing_test.cpp:" + std::to_string(line) + ": CHECK failed: case 3 of 7\n"));
+    SEQLIB_CHECK(c.text.find('\n') == c.text.size() - 1);
 }
 
 SEQLIB_TEST(testing, CheckEqGivesBothValues)
@@ -179,17 +184,24 @@ SEQLIB_TEST(testing, RequireLooksAtItsCondition)
 
 SEQLIB_TEST(testing, FailuresGiveTheContextAndTheTest)
 {
+    // A failed SEQLIB_CHECK and a failed Check give the same parts.
     const Captured c = Capture(
         []
         {
             seqlib::testing::SetContext("case 7");
             seqlib::testing::test_name = "SomeTest";
             SEQLIB_CHECK(1 + 1 == 3);
+            seqlib::testing::Check(false, "the sum is 3");
         });
 
-    SEQLIB_CHECK(c.failures == 1);
-    SEQLIB_CHECK(c.text.ends_with(": SomeTest: CHECK failed: 1 + 1 == 3 (case 7)\n"));
-    SEQLIB_CHECK(c.text.find("testing_test.cpp:") != std::string::npos);
+    SEQLIB_CHECK(c.failures == 2);
+    const std::size_t second = c.text.find('\n') + 1;
+    const std::string macro = c.text.substr(0, second);
+    const std::string check = c.text.substr(second);
+    SEQLIB_CHECK(macro.ends_with(": SomeTest: CHECK failed: 1 + 1 == 3 (case 7)\n"));
+    SEQLIB_CHECK(check.ends_with(": SomeTest: CHECK failed: the sum is 3 (case 7)\n"));
+    SEQLIB_CHECK(macro.find("testing_test.cpp:") != std::string::npos);
+    SEQLIB_CHECK(check.find("testing_test.cpp:") != std::string::npos);
 }
 
 SEQLIB_TEST(testing, ErrorOfGivesTheMessage)

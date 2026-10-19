@@ -109,78 +109,6 @@ SEQLIB_TEST(midi_writer, ControlKindsSortAfterTheNamedKinds)
     SEQLIB_CHECK(midi::ControllerOf(midi::ControlKind(104)) == 104);
 }
 
-EventKind ToKind(CaseKind kind)
-{
-    switch (kind)
-    {
-    case CaseKind::kNoteOn:
-        return EventKind::kNoteOn;
-    case CaseKind::kNoteOff:
-        return EventKind::kNoteOff;
-    case CaseKind::kPreset:
-        return EventKind::kPreset;
-    case CaseKind::kVolume:
-        return EventKind::kVolume;
-    case CaseKind::kExpression:
-        return EventKind::kExpression;
-    case CaseKind::kPan:
-        return EventKind::kPan;
-    case CaseKind::kPitch:
-        return EventKind::kPitch;
-    case CaseKind::kModulation:
-        return EventKind::kModulation;
-    case CaseKind::kReverb:
-        return EventKind::kReverb;
-    case CaseKind::kChorus:
-        return EventKind::kChorus;
-    case CaseKind::kSoundOff:
-        return EventKind::kSoundOff;
-    case CaseKind::kFilter:
-        return midi::ControlKind(102);
-    case CaseKind::kLowPass:
-        return midi::ControlKind(103);
-    case CaseKind::kBiquad:
-        return midi::ControlKind(104);
-    }
-
-    return EventKind::kNoteOn;
-}
-
-midi::Performance ToPerformance(const MidiCase& c)
-{
-    midi::Performance perf;
-    perf.timebase = c.timebase;
-    for (const auto& [tick, bpm] : c.tempo)
-    {
-        perf.tempo.push_back({tick, bpm});
-    }
-
-    for (const CaseEvent& e : c.events)
-    {
-        midi::TrackEvent event;
-        event.tick = e.tick;
-        event.kind = ToKind(e.kind);
-        event.key = e.key;
-        event.value = e.value;
-        event.preset = e.preset;
-        event.semitones = e.semitones;
-        event.note = e.note;
-        event.part = e.part;
-        event.after = e.after;
-        perf.tracks[static_cast<std::size_t>(e.track)].push_back(event);
-    }
-
-    perf.track_names = c.track_names;
-    perf.frame_ticks = c.frame_ticks;
-    perf.end_tick = c.end_tick;
-    if (c.loops)
-    {
-        perf.loop = midi::Performance::Loop{c.loop_start, c.loop_end};
-    }
-
-    return perf;
-}
-
 // Writes each case with `timing` and compares the file and the report with the ones in `folder`. A case with no file
 // there is skipped.
 void CheckCasesAgainstFiles(midi::FrameTiming timing, const std::string& folder)
@@ -198,7 +126,7 @@ void CheckCasesAgainstFiles(midi::FrameTiming timing, const std::string& folder)
         midi::MidiReport report;
         const midi::MidiOptions options{timing};
 
-        const std::vector<uint8_t> written = midi::WriteMidi(ToPerformance(c), "Test " + c.name, report, options);
+        const std::vector<uint8_t> written = midi::WriteMidi(c.perf, "Test " + c.name, report, options);
 
         SetContext("case " + c.name + " in " + folder);
         SEQLIB_CHECK(written == expected);
@@ -224,7 +152,7 @@ SEQLIB_TEST(midi_writer, WriterMatchesFilesWithFramesAtTheirStart)
 
 SEQLIB_TEST(midi_writer, NoteCountCountsNoteOns)
 {
-    const midi::Performance perf = ToPerformance(LayersCase());
+    const midi::Performance perf = LayersCase().perf;
 
     const uint32_t notes = midi::NoteCount(perf);
 
@@ -345,6 +273,43 @@ SEQLIB_TEST(midi_writer, TempoOnTheLoopsFirstTickFollowsItsMarkers)
 
         const std::vector<std::string> kExpected = {"marker", "CC111", "tempo"};
         SEQLIB_CHECK(order == kExpected);
+    }
+}
+
+SEQLIB_TEST(midi_writer, EventsBeforeAMarkerStayBeforeIt)
+{
+    // Two notes end on the tick before a loop marker, in a frame that starts on the marker's MIDI tick, or just before
+    // it and rounds there. A player that loops at the marker could skip a note-off on the marker's tick, and the note
+    // would hang. Each note-off goes one MIDI tick before the marker, in either timing. The notes that start on the
+    // markers' ticks stay there.
+    for (const midi::FrameTiming timing : {midi::FrameTiming::kNotAfterTick, midi::FrameTiming::kFrameStart})
+    {
+        SetContext(timing == midi::FrameTiming::kNotAfterTick ? "frames not after their ticks"
+                                                              : "frames at their start");
+        midi::Performance perf;
+        perf.timebase = 48;
+        perf.tempo.push_back({0, 120.0});
+        perf.tracks[0] = {
+            {.tick = 0, .kind = EventKind::kNoteOn, .key = 60, .value = 100, .note = 1},
+            {.tick = 23, .kind = EventKind::kNoteOff, .key = 60, .note = 1, .after = 1.0},
+            {.tick = 24, .kind = EventKind::kNoteOn, .key = 62, .value = 100, .note = 2},
+            {.tick = 71, .kind = EventKind::kNoteOff, .key = 62, .note = 2, .after = 0.999},
+            {.tick = 72, .kind = EventKind::kNoteOn, .key = 64, .value = 100, .note = 3},
+            {.tick = 84, .kind = EventKind::kNoteOff, .key = 64, .note = 3},
+        };
+        perf.end_tick = 96;
+        perf.loop = midi::Performance::Loop{24, 72};
+        midi::MidiReport report;
+
+        const midi::File file = midi::Read(midi::WriteMidi(perf, "Test", report, {timing}));
+
+        const uint64_t scale = file.division / perf.timebase;
+        const std::vector<midi::Note> notes = midi::Notes(file);
+        SEQLIB_REQUIRE_EQ(notes.size(), 3);
+        SEQLIB_CHECK_EQ(notes[0].off, 24 * scale - 1);
+        SEQLIB_CHECK_EQ(notes[1].on, 24 * scale);
+        SEQLIB_CHECK_EQ(notes[1].off, 72 * scale - 1);
+        SEQLIB_CHECK_EQ(notes[2].on, 72 * scale);
     }
 }
 

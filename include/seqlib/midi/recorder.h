@@ -180,6 +180,9 @@ public:
 private:
     void SwitchTo(Performance& perf, TrackOutput& output, uint32_t tick, uint8_t part);
 
+    // Counts part `part` among the parts that MIDI track `midi_track` has used (PartsUsed()).
+    void MarkUsed(uint8_t midi_track, uint8_t part);
+
     RecorderOptions options_;
     uint32_t next_note_ = 1;
     std::vector<PartSwitch> part_switches_;

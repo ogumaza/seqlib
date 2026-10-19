@@ -134,13 +134,13 @@ struct Modulator
     uint16_t transform = kLinear;
 };
 
-// Modulator sources as the file holds them: a 7-bit index, the controller flag (bit 7), the direction (bit 8), the
-// polarity (bit 9) and the curve type (bits 10-15).
-inline constexpr uint16_t kSrcVelocityLinearNegative = 0x0102; // note-on velocity: linear, unipolar, negative
-inline constexpr uint16_t kSrcVelocitySwitch = 0x0C02;         // note-on velocity: switch, unipolar, positive
-inline constexpr uint16_t kSrcModWheel = 0x0081;               // CC1: linear, unipolar, positive
-inline constexpr uint16_t kSrcPitchWheel = 0x020E;             // the pitch wheel: linear, bipolar, positive
-inline constexpr uint16_t kSrcPitchWheelSensitivity = 0x0010;  // the pitch wheel's sensitivity (RPN 0)
+// The sources of the default modulators of SoundFont 2.01 and of FluidSynth, built from the Source flags. A source
+// without a curve flag is linear, a source without kBipolar is unipolar, and a source without kNegative is positive.
+inline constexpr uint16_t kSrcVelocityLinearNegative = kNoteOnVelocity | kNegative; // 0x0102
+inline constexpr uint16_t kSrcVelocitySwitch = kNoteOnVelocity | kSwitch;           // 0x0C02
+inline constexpr uint16_t kSrcModWheel = kController | 1;                           // 0x0081: CC1
+inline constexpr uint16_t kSrcPitchWheel = kPitchWheel | kBipolar;                  // 0x020E
+inline constexpr uint16_t kSrcPitchWheelSensitivity = kPitchWheelSensitivity;       // 0x0010: RPN 0
 
 // The modulators that a global zone starts with, to turn velocity's filtering off and give the pitch wheel its full
 // range. A zone's modulator replaces the default modulator that has the same source, destination, amount source and

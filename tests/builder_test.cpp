@@ -6,16 +6,17 @@
 #include "seqlib/midi/builder.h"
 
 #include <cstdint>
-#include <string>
 #include <vector>
 
 #include "test.h"
+#include "test_data.h"
 
 namespace
 {
 
 using seqlib::midi::FileBuilder;
 using seqlib::midi::TrackBuilder;
+using seqlib::test::FromHex;
 namespace cc = seqlib::midi::cc;
 
 // The bytes of OrderCase()'s file.
@@ -28,17 +29,6 @@ constexpr char kOrderGolden[] =
 
 // The bytes of RetimeCase()'s file.
 constexpr char kRetimeGolden[] = "4d546864000000060001000100f04d54726b0000000c0a913e640a813e001eff2f00";
-
-std::vector<uint8_t> FromHex(const char* hex)
-{
-    std::vector<uint8_t> bytes;
-    for (const char* p = hex; p[0] && p[1]; p += 2)
-    {
-        bytes.push_back(static_cast<uint8_t>(std::stoi(std::string(p, 2), nullptr, 16)));
-    }
-
-    return bytes;
-}
 
 // Events of every kind added out of order, several at one tick, with steps, values out of range, a tempo repeated after
 // a loopStart marker and a delta of three bytes.

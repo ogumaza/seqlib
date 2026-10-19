@@ -14,6 +14,7 @@ namespace seqlib::midi
 
 using detail::AppendBe16;
 using detail::AppendBe32;
+using detail::AppendFourcc;
 
 void AppendVlq(std::vector<uint8_t>& out, uint32_t v)
 {
@@ -33,7 +34,7 @@ void AppendVlq(std::vector<uint8_t>& out, uint32_t v)
 
 void AppendHeader(std::vector<uint8_t>& out, uint16_t format, uint16_t tracks, uint16_t division)
 {
-    out.insert(out.end(), {'M', 'T', 'h', 'd'});
+    AppendFourcc(out, "MThd");
     AppendBe32(out, 6);
     AppendBe16(out, format);
     AppendBe16(out, tracks);
@@ -42,7 +43,7 @@ void AppendHeader(std::vector<uint8_t>& out, uint16_t format, uint16_t tracks, u
 
 void AppendTrack(std::vector<uint8_t>& out, std::span<const uint8_t> body)
 {
-    out.insert(out.end(), {'M', 'T', 'r', 'k'});
+    AppendFourcc(out, "MTrk");
     AppendBe32(out, static_cast<uint32_t>(body.size()));
     out.insert(out.end(), body.begin(), body.end());
 }
