@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+// The opcodes of an SFZ region that come from numbers alone (see opcodes.h).
+
 #include "seqlib/sfz/opcodes.h"
 
 #include "seqlib/sfz/text.h"

@@ -105,20 +105,20 @@ SEQLIB_TEST(sfz_track_file, ThreeTracksOnTwoChannels)
 {
     const std::vector<sfz::File> files = sfz::TrackFiles(ThreeTracks(), TwoChannels(), Options(), Additions);
 
-    const std::string track0 = std::string(
-                                   "// Track 0 of Song \"A\", converted by conv. Load for MIDI track \"Track 0\" "
-                                   "and its layers.\n\n<control>\ndefault_path=../samples/\nhint_ram_based=1\n\n") +
-                               kPanCurve +
-                               "// Track 0's curve\n<curve> curve_index=8\nv000=0 v127=1\n\n"
-                               "<global>\nbend_up=199.975586 bend_down=-199.975586\n"
-                               "pan_oncc10=100 pan_curvecc10=7 pan_smoothcc10=0\n" +
-                               kVolumes +
-                               "fil_type=lpf_1p\n"
-                               "\n// Strings\n<master> loprog=0 hiprog=0\n<group>\n<region> sample=w0.wav\n"
-                               "\n// Lead \n<master> loprog=2 hiprog=2\n<group>\n<region> sample=w2.wav\n";
+    const std::string kTrack0 = std::string(
+                                    "// Track 0 of Song \"A\", converted by conv. Load for MIDI track \"Track 0\" "
+                                    "and its layers.\n\n<control>\ndefault_path=../samples/\nhint_ram_based=1\n\n") +
+                                kPanCurve +
+                                "// Track 0's curve\n<curve> curve_index=8\nv000=0 v127=1\n\n"
+                                "<global>\nbend_up=200 bend_down=-200\n"
+                                "pan_oncc10=100 pan_curvecc10=7 pan_smoothcc10=0\n" +
+                                kVolumes +
+                                "fil_type=lpf_1p\n"
+                                "\n// Strings\n<master> loprog=0 hiprog=0\n<group>\n<region> sample=w0.wav\n"
+                                "\n// Lead \n<master> loprog=2 hiprog=2\n<group>\n<region> sample=w2.wav\n";
     SEQLIB_CHECK(files.size() == 2);
     SEQLIB_CHECK(files.size() == 2 && files[0].name == "Track 0.sfz" && files[1].name == "Track 1.sfz");
-    SEQLIB_CHECK(!files.empty() && files[0].text == track0);
+    SEQLIB_CHECK(!files.empty() && files[0].text == kTrack0);
 }
 
 SEQLIB_TEST(sfz_track_file, TrackNamesAndLevelCut)
@@ -129,20 +129,20 @@ SEQLIB_TEST(sfz_track_file, TrackNamesAndLevelCut)
 
     const std::vector<sfz::File> files = sfz::TrackFiles(ThreeTracks(), TwoChannels(), options, Additions);
 
-    const std::string track1 = std::string(
-                                   "// Bass: low of Song \"A\", converted by conv. Load for MIDI track \"Bass: "
-                                   "low\" and its layers.\n// MIDI gain was reduced by 1.5 dB. Region volumes "
-                                   "restore that gain.\n\n<control>\ndefault_path=../samples/\n"
-                                   "hint_ram_based=1\n\n") +
-                               kPanCurve +
-                               "// Track 1's curve\n<curve> curve_index=8\nv000=0 v127=1\n\n"
-                               "<global>\nbend_up=1199.853516 bend_down=-1199.853516\n"
-                               "pan_oncc10=100 pan_curvecc10=7 pan_smoothcc10=0\n" +
-                               kVolumes +
-                               "fil_type=lpf_1p\n"
-                               "\n// Bass\n<master> loprog=1 hiprog=1\n<group>\n<region> sample=w1.wav\n";
+    const std::string kTrack1 = std::string(
+                                    "// Bass: low of Song \"A\", converted by conv. Load for MIDI track \"Bass: "
+                                    "low\" and its layers.\n// MIDI gain was reduced by 1.5 dB. Region volumes "
+                                    "restore that gain.\n\n<control>\ndefault_path=../samples/\n"
+                                    "hint_ram_based=1\n\n") +
+                                kPanCurve +
+                                "// Track 1's curve\n<curve> curve_index=8\nv000=0 v127=1\n\n"
+                                "<global>\nbend_up=1200 bend_down=-1200\n"
+                                "pan_oncc10=100 pan_curvecc10=7 pan_smoothcc10=0\n" +
+                                kVolumes +
+                                "fil_type=lpf_1p\n"
+                                "\n// Bass\n<master> loprog=1 hiprog=1\n<group>\n<region> sample=w1.wav\n";
     SEQLIB_CHECK(files.size() == 2 && files[0].name == "Track 0.sfz" && files[1].name == "Bass_ low.sfz");
-    SEQLIB_CHECK(files.size() == 2 && files[1].text == track1);
+    SEQLIB_CHECK(files.size() == 2 && files[1].text == kTrack1);
 }
 
 SEQLIB_TEST(sfz_track_file, BankSelectAbove128Presets)

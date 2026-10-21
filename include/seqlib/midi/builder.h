@@ -11,27 +11,10 @@
 #include <string>
 #include <vector>
 
+#include "seqlib/midi/controllers.h"
+
 namespace seqlib::midi
 {
-
-// MIDI controller numbers.
-namespace cc
-{
-
-constexpr int kBankSelect = 0;
-constexpr int kDataEntry = 6;
-constexpr int kVolume = 7;
-constexpr int kPan = 10;
-constexpr int kExpression = 11;
-constexpr int kBankSelectLsb = 32;
-constexpr int kDataEntryLsb = 38;
-constexpr int kReverb = 91;
-constexpr int kChorus = 93;
-constexpr int kRpnLsb = 100;
-constexpr int kRpnMsb = 101;
-constexpr int kAllSoundOff = 120;
-
-} // namespace cc
 
 // Sets CC10 and CC11 for the levels `left` and `right` (full scale 128). CC11 sets the loudness. Under the SF2 default
 // modulator, a controller value c scales the amplitude by (c/127)^2. CC10 sets the ratio between the sides, for a
@@ -39,9 +22,10 @@ constexpr int kAllSoundOff = 120;
 void LevelsToControllers(double left, double right, int& cc10, int& cc11);
 
 // A track of a Standard MIDI File. Events can be added in any order. They're written by tick. At the same tick, meta
-// events come first, then note-offs, key pressures, bank selects, program changes, controllers, pitch bends and
-// note-ons. Events of one kind keep the order they were added in. A tick's events can also take steps. Each step's
-// events come after those of the steps before it. Steps allow a note to play between two program changes at its tick.
+// events come first, then system exclusive messages, note-offs, key pressures, bank selects, program changes,
+// controllers, pitch bends and note-ons. Events of one kind keep the order they were added in. A tick's events can also
+// take steps. Each step's events come after those of the steps before it. Steps allow a note to play between two
+// program changes at its tick.
 class TrackBuilder
 {
 public:
@@ -59,6 +43,11 @@ public:
     // change goes after the meta events added at `tick` so far, such as a loopStart marker. A player that jumps back to
     // the marker and keeps the tempo it was playing then takes the tempo that the tick had the first time.
     void RepeatTempo(uint32_t tick);
+
+    // Adds the system exclusive message `message`, from its F0 to its F7. The event holds F0, the number of bytes after
+    // F0 as a variable-length quantity, then those bytes. Throws std::invalid_argument for a message that doesn't start
+    // with F0 and end with F7, or that has a byte above 127 between them.
+    void SysEx(uint32_t tick, const std::vector<uint8_t>& message);
 
     // Adds a note-on at step `step` of its tick. With `before_programs`, the note-on goes before the bank selects and
     // program changes at the same step. Such a note plays with the program from before them.
@@ -106,6 +95,7 @@ private:
     enum Order : int
     {
         kMeta = 0,
+        kSysEx = 5,
         kNoteOff = 10,
         kKeyPressure = 11,
         kNoteOnFirst = 12,

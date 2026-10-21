@@ -186,10 +186,10 @@ private:
     RecorderOptions options_;
     uint32_t next_note_ = 1;
     std::vector<PartSwitch> part_switches_;
-    std::array<uint8_t, 16> part_limits_;
+    std::array<uint8_t, 16> part_limits_ = {16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16};
     std::array<uint8_t, 16> parts_used_{};
-    double level_scale_;
-    double level_peak_;
+    double level_scale_ = 1.0;
+    double level_peak_ = 0.0;
     std::map<std::string, uint32_t> approximations_;
     std::vector<std::string> warnings_;
 };

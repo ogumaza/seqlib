@@ -139,23 +139,40 @@ struct Modulator
 inline constexpr uint16_t kSrcVelocityLinearNegative = kNoteOnVelocity | kNegative; // 0x0102
 inline constexpr uint16_t kSrcVelocitySwitch = kNoteOnVelocity | kSwitch;           // 0x0C02
 inline constexpr uint16_t kSrcModWheel = kController | 1;                           // 0x0081: CC1
+inline constexpr uint16_t kSrcPan = kController | kBipolar | 10;                    // 0x028A: CC10
 inline constexpr uint16_t kSrcPitchWheel = kPitchWheel | kBipolar;                  // 0x020E
 inline constexpr uint16_t kSrcPitchWheelSensitivity = kPitchWheelSensitivity;       // 0x0010: RPN 0
 
-// The modulators that a global zone starts with, to turn velocity's filtering off and give the pitch wheel its full
-// range. A zone's modulator replaces the default modulator that has the same source, destination, amount source and
-// transform.
+// The default modulator from CC10 to pan (section 8.4.6) with an amount of 500 tenths of a percent. The specification
+// gives it 1000. CC10 then covers the pan generator's range: from -50 % at 0 to nearly 50 % at 127. The specification
+// leaves the exact value at 127 open. Sections 8.4.6 and 9.5.3 map 127 to 127/128: 49.6 % at this amount. A linear map
+// with 64 at the centre gives 63/64: 49.2 %. The E-mu chips of Creative's Sound Blaster cards, FluidSynth, BASSMIDI and
+// most other SoundFont synthesizers play the default modulator at 500. In an instrument's global zone, this modulator
+// replaces the default one (section 9.5.1). A synthesizer that follows the specification then pans as those
+// synthesizers do. A CC10 modulator in a local zone replaces this one in that zone. Section 8.4.6 lists Initial
+// Attenuation as the default modulator's destination. The section's title and text give the pan.
+inline constexpr Modulator kCc10ToPan = {kSrcPan, kPan, 500, kNoController, kLinear};
+
+// The modulators that a global zone starts with. They turn velocity's filtering off, give the pitch wheel its full
+// range and give CC10 the pan range that most synthesizers give it. A zone's modulator replaces the default modulator
+// that has the same source, destination, amount source and transform.
 // - The first two set the default velocity-to-cutoff modulator's amount to 0, in the versions of SoundFont 2.01 and of
 //   FluidSynth. FluidSynth's version has a velocity switch as its amount source. Every velocity then plays with the
 //   same filter.
 // - The third replaces the default pitch wheel modulator. That one gives 12700 cents times the bend range / 128. A
 //   7-semitone bend set through RPN 0 comes out about 5.5 cents flat. This one follows FluidSynth: it gives 12800 cents
 //   and targets fineTune. The bend then covers the full range.
-inline constexpr std::array<Modulator, 3> kNoVelocityFilterFullBend = {{
+// - The fourth is kCc10ToPan.
+inline constexpr std::array<Modulator, 4> kGlobalZoneModulators = {{
     {kSrcVelocityLinearNegative, kInitialFilterFc, 0, 0},
     {kSrcVelocityLinearNegative, kInitialFilterFc, 0, kSrcVelocitySwitch},
     {kSrcPitchWheel, kFineTune, 12800, kSrcPitchWheelSensitivity},
+    kCc10ToPan,
 }};
+
+// kGlobalZoneModulators under the name that it had before it held kCc10ToPan. The name misleads: the set holds a pan
+// modulator too. Callers move to kGlobalZoneModulators. This name goes once none uses it.
+inline constexpr const std::array<Modulator, 4>& kNoVelocityFilterFullBend = kGlobalZoneModulators;
 
 struct Zone
 {

@@ -40,8 +40,6 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: recursive
       - name: Configure
         run: cmake -S . -B build ${{ matrix.cmake }}
       - name: Build

@@ -483,7 +483,7 @@ SEQLIB_TEST(midi_recorder, SetTempo)
         rec.SetTempo(perf, 3, 150.0);
         rec.SetTempo(perf, 4, -10.0);
         rec.SetTempo(perf, 5, 90.5);
-        SEQLIB_CHECK(perf.tempo.size() == 2);
+        SEQLIB_REQUIRE_EQ(perf.tempo.size(), 2);
         SEQLIB_CHECK(perf.tempo[0].tick == 0 && perf.tempo[0].bpm == 150.0);
         SEQLIB_CHECK(perf.tempo[1].tick == 5 && perf.tempo[1].bpm == 90.5);
     }

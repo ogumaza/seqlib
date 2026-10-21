@@ -24,6 +24,8 @@ seqlib depends on nothing but the C++ standard library.
 - **MIDI file building** (`seqlib/midi/builder.h`): tracks whose events can be added in any order. At one tick,
   events sort by step and then by kind. A track can be retimed. `LevelsToControllers` turns left and right levels into
   pan and expression.
+- **MIDI controllers** (`seqlib/midi/controllers.h`): the numbers of the controllers that the builder and the
+  performance writer send.
 - **SoundFont 2 writing** (`seqlib/sf2/soundfont.h`, `seqlib/sf2/writer.h`): samples, instruments, presets, zones,
   generators and modulators, with stereo links, INFO fields in the caller's order, and the 46 zero points that the
   format requires after each sample.
@@ -32,7 +34,8 @@ seqlib depends on nothing but the C++ standard library.
   channel 10 plays from bank 128.
 - **SoundFont samples** (`seqlib/sf2/samples.h`): the samples that a prepared wave becomes, mono or a linked stereo
   pair, with loop points.
-- **SoundFont units** (`seqlib/sf2/units.h`): timecents, and a square-root pan law converted to SoundFont's pan law.
+- **SoundFont units** (`seqlib/sf2/units.h`): timecents, an LFO's frequency in absolute cents, a square-root pan law
+  converted to SoundFont's pan law, and an attenuation in the form that a zone holds it.
 - **SFZ text** (`seqlib/sfz/text.h`): numbers, controller curves and comments.
 - **SFZ opcodes** (`seqlib/sfz/opcodes.h`): a region's tuning, amplitude envelope and loop.
 - **SFZ track files** (`seqlib/sfz/track_file.h`): a sequence's SFZ files, one for each track that has a MIDI channel.
@@ -55,6 +58,25 @@ seqlib depends on nothing but the C++ standard library.
   runs both checks on the files it's given.
 
 Writers return the file's bytes, and readers take them. Your program reads and writes the files.
+
+## Levels and pans in SoundFonts
+
+The SoundFont format was made for the E-mu chips of Creative's Sound Blaster cards. Those chips depart from the
+SoundFont 2.04 specification on two points. FluidSynth, BASSMIDI and most other SoundFont synthesizers depart in the
+same way. seqlib writes both values for those synthesizers:
+
+- **Attenuation.** The specification attenuates a note by the full value of the initialAttenuation generator. The
+  synthesizers apply 0.4 of it. seqlib therefore writes 2.5 times the attenuation in the generator, up to the
+  generator's limit of 1440 cB. The synthesizers play that limit as 576 cB. A modulator without a source holds any
+  attenuation beyond 576 cB. FluidSynth applies that modulator from version 2.4.5. BASSMIDI and earlier versions of
+  FluidSynth ignore it. A synthesizer that follows the specification plays every attenuated zone too quietly.
+  `ToZoneAttenuation` (`seqlib/sf2/units.h`) gives the generator's value and the modulator. `RegionZone`
+  (`seqlib/sf2/presets.h`) writes both.
+- **Pan.** The specification gives the default modulator from CC10 to pan an amount of 1000 tenths of a percent. The
+  synthesizers play it at 500. CC10 then pans from -50 % at 0 to nearly 50 % at 127. `kCc10ToPan`
+  (`seqlib/sf2/soundfont.h`) is that modulator with an amount of 500. In an instrument's global zone, it replaces the
+  default modulator. A synthesizer that follows the specification then pans as the others do. `kGlobalZoneModulators`
+  holds `kCc10ToPan` and the modulators that turn velocity's filtering off and give the pitch wheel its full range.
 
 ## Building
 

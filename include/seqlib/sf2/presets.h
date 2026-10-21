@@ -35,7 +35,7 @@ struct ZoneValues
 {
     std::pair<int, int> keys{0, 127};
     std::pair<int, int> velocities{0, 127};
-    double attenuation = 0.0; // centibels. RegionZone rounds it into 0 to 1440, and leaves 0 out
+    double attenuation = 0.0; // centibels, 0 to 1440, written in the form that ToZoneAttenuation (units.h) gives
     int pan = 0;              // -500 (left) to 500 (right). 0 is left out
     std::optional<int> delay; // the volume envelope's delay in timecents, if the zone has one
 
@@ -55,7 +55,8 @@ struct ZoneValues
 };
 
 // The zone with `values`' generators, in this order: the key and velocity ranges, the attenuation, the pan, the volume
-// envelope, the root key, the tuning, the sample mode, the exclusive class and the sample.
+// envelope, the root key, the tuning, the sample mode, the exclusive class and the sample. An attenuation that the
+// generator can't hold also gives the zone a modulator (ToZoneAttenuation).
 Zone RegionZone(const ZoneValues& values);
 
 // Adds `instrument` to `sf`, and a preset named `name` that plays it, at bank index / 128 and program index % 128.

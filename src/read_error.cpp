@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+// The error that seqlib's readers throw (see read_error.h).
+
 #include "seqlib/read_error.h"
 
 #include <string>

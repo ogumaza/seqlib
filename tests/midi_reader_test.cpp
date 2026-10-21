@@ -83,9 +83,9 @@ SEQLIB_TEST(midi_reader, ReadsEventsWithTheirTicks)
 
     SEQLIB_CHECK(file.format == 1);
     SEQLIB_CHECK(file.division == 480);
-    SEQLIB_CHECK(file.tracks.size() == 1);
+    SEQLIB_REQUIRE_EQ(file.tracks.size(), 1);
     const std::vector<midi::Event>& events = file.tracks[0].events;
-    SEQLIB_CHECK(events.size() == 6);
+    SEQLIB_REQUIRE_EQ(events.size(), 6);
     SEQLIB_CHECK(events[1].tick == 0 && events[1].bytes == std::vector<uint8_t>({0x90, 0x3c, 0x64}));
     SEQLIB_CHECK(events[2].tick == 96 && events[2].bytes == std::vector<uint8_t>({0x90, 0x3c, 0x00}));
     SEQLIB_CHECK(events[3].tick == 224 && events[3].bytes == std::vector<uint8_t>({0xe1, 0x00, 0x40}));
@@ -101,7 +101,7 @@ SEQLIB_TEST(midi_reader, PairsNotesEarliestFirst)
 
     const std::vector<midi::Note> notes = midi::Notes(file);
 
-    SEQLIB_CHECK(notes.size() == 3);
+    SEQLIB_REQUIRE_EQ(notes.size(), 3);
     SEQLIB_CHECK(notes[0].track == 0 && notes[0].channel == 0 && notes[0].key == 60 && notes[0].velocity == 100);
     SEQLIB_CHECK(notes[0].on == 0 && notes[0].off == 96);
     SEQLIB_CHECK(notes[1].track == 1 && notes[1].velocity == 0x10 && notes[1].on == 0 && notes[1].off == 20);
@@ -119,7 +119,7 @@ SEQLIB_TEST(midi_reader, FindsNamesMarkersAndBends)
     SEQLIB_CHECK(names == std::vector<std::string>({"Lead", "T"}));
     SEQLIB_CHECK(markers.size() == 1 && markers[0].tick == 224 && markers[0].text == "loopStart");
     SEQLIB_CHECK(bends.size() == 1 && bends[0].track == 0 && bends[0].channel == 1);
-    SEQLIB_CHECK(bends[0].tick == 224 && bends[0].value == 8192);
+    SEQLIB_CHECK(bends.size() == 1 && bends[0].tick == 224 && bends[0].value == 8192);
 }
 
 SEQLIB_TEST(midi_reader, FindsEventsInOrderOfTick)
@@ -130,7 +130,7 @@ SEQLIB_TEST(midi_reader, FindsEventsInOrderOfTick)
 
     const std::vector<midi::Event> found = file.Find(0xb0);
 
-    SEQLIB_CHECK(found.size() == 3);
+    SEQLIB_REQUIRE_EQ(found.size(), 3);
     SEQLIB_CHECK(found[0].tick == 5 && found[0].bytes[2] == 0x32);
     SEQLIB_CHECK(found[1].tick == 10 && found[1].bytes[2] == 0x64);
     SEQLIB_CHECK(found[2].tick == 10 && found[2].bytes[2] == 0x40);

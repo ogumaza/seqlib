@@ -50,9 +50,8 @@ bool IsSetting(EventKind kind)
     }
 }
 
-Recorder::Recorder(const RecorderOptions& options) : options_(options), level_scale_(1.0), level_peak_(0.0)
+Recorder::Recorder(const RecorderOptions& options) : options_(options)
 {
-    part_limits_.fill(16);
 }
 
 const RecorderOptions& Recorder::Options() const

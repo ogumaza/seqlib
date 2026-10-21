@@ -133,17 +133,9 @@ SEQLIB_TEST(sf2_reader, RecordPastTheEndThrows)
 {
     const sf2::Records records = sf2::Read(sf2::Write(ValidSoundFont()));
 
-    bool thrown = false;
-    try
-    {
-        records.Record("phdr", 38, 3);
-    }
-    catch (const std::out_of_range&)
-    {
-        thrown = true;
-    }
+    const std::string error = seqlib::testing::ErrorOf<std::out_of_range>([&] { records.Record("phdr", 38, 3); });
 
-    SEQLIB_CHECK(thrown);
+    SEQLIB_CHECK(!error.empty());
 }
 
 SEQLIB_TEST(sf2_reader, ReadThrowsForAWrongRiffSize)

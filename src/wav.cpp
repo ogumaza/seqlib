@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+// WAV files (see wav.h).
+
 #include "seqlib/wav.h"
 
 #include <algorithm>
@@ -202,6 +204,7 @@ Format ReadFormat(std::span<const uint8_t> bytes, const Chunk& fmt)
     format.rate = LoadLe32(f + 4);
     format.block = LoadLe16(f + 12);
     format.bits = LoadLe16(f + 14);
+
     if (tag == kFormatExtensible)
     {
         if (fmt.size < kExtensibleFormatSize ||
@@ -211,6 +214,7 @@ Format ReadFormat(std::span<const uint8_t> bytes, const Chunk& fmt)
         }
         tag = LoadLe16(f + 24);
     }
+
     format.floating = tag == kFormatFloat;
     if (tag != kFormatPcm && !format.floating)
     {
@@ -290,6 +294,7 @@ void ReadLoop(std::span<const uint8_t> bytes, const Chunk& smpl, std::size_t fra
     {
         return;
     }
+
     const uint8_t* s = bytes.data() + smpl.start;
     contents.loops = LoadLe32(s + kLoopCount);
     if (contents.loops == 0 || smpl.size < kLoops + kLoopSize)

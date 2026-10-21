@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+// A sequence's SFZ files (see track_file.h).
+
 #include "seqlib/sfz/track_file.h"
 
 #include <set>
@@ -14,10 +16,6 @@ namespace
 
 // Custom curve IDs; sfizz reserves 0-6. The hook's curves come after this one.
 constexpr int kPanCurve = 7; // CC10 to pan
-
-// sfizz divides pitch wheel values by 8191; the MIDI writer uses 8192 steps per full range. Scale the SFZ bend range by
-// 8191/8192.
-constexpr double kBendScale = 8191.0 / 8192.0;
 
 // The name of track `t`: the MIDI track's name with `track_names`, where it has one, and otherwise "Track <t>".
 std::string TrackName(const midi::Performance& perf, int t, bool track_names)
@@ -54,7 +52,7 @@ std::string TrackFile(const midi::Performance& perf, int t, int bend_range, cons
     s += Curve(kPanCurve, "CC10 to pan", [](int v) { return (v - 64) / 64.0; });
     s += text.curves;
 
-    const std::string bend = Number(bend_range * 100.0 * kBendScale, 6);
+    const std::string bend = std::to_string(bend_range * 100);
     s += "<global>\nbend_up=" + bend + " bend_down=-" + bend + "\n";
 
     // CC7, CC10 and CC11 take effect at once. sfizz would otherwise smooth them over 10 ms, from CC7 100 at first. A

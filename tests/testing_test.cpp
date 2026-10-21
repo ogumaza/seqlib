@@ -92,6 +92,15 @@ void ThrowIf(bool fail)
     }
 }
 
+// Throws std::invalid_argument when `fail` is true, as ThrowIf throws std::runtime_error.
+void RefuseIf(bool fail)
+{
+    if (fail)
+    {
+        throw std::invalid_argument("bad value");
+    }
+}
+
 SEQLIB_TEST(testing, CheckGivesItsResult)
 {
     // A failure gives the file and the line of the call.
@@ -210,6 +219,32 @@ SEQLIB_TEST(testing, ErrorOfGivesTheMessage)
     SEQLIB_CHECK(seqlib::testing::ErrorOf([&] { ThrowIf(fail); }) == "no such file");
     fail = false;
     SEQLIB_CHECK(seqlib::testing::ErrorOf([&] { ThrowIf(fail); }).empty());
+}
+
+SEQLIB_TEST(testing, ErrorOfCatchesOnlyItsType)
+{
+    // An exception of the type, or of a type derived from it, gives its message. The inner ErrorOf doesn't catch the
+    // std::invalid_argument. The outer one catches it.
+    bool fail = true;
+    const auto refuse = [&]
+    {
+        RefuseIf(fail);
+    };
+    const auto inner = [&]
+    {
+        seqlib::testing::ErrorOf<std::runtime_error>(refuse);
+    };
+
+    const std::string exact = seqlib::testing::ErrorOf<std::invalid_argument>(refuse);
+    const std::string base = seqlib::testing::ErrorOf<std::logic_error>(refuse);
+    const std::string outer = seqlib::testing::ErrorOf<std::invalid_argument>(inner);
+    fail = false;
+    const std::string none = seqlib::testing::ErrorOf<std::invalid_argument>(refuse);
+
+    SEQLIB_CHECK(exact == "bad value");
+    SEQLIB_CHECK(base == "bad value");
+    SEQLIB_CHECK(outer == "bad value");
+    SEQLIB_CHECK(none.empty());
 }
 
 SEQLIB_TEST(testing, SummaryGivesTheResult)

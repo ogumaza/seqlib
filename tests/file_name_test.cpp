@@ -45,10 +45,7 @@ constexpr NameCase kNames[] = {
      "b\x00"
      "c",
      5, "a_b_c", "a_b_c"},
-    {"\x01"
-     "\x1f"
-     "\x7f",
-     3, "__\x7f", "__\x7f"},
+    {"\x01\x1f\x7f", 3, "__\x7f", "__\x7f"},
     {"x.CON", 5, "x.CON", "x.CON"},
     {".CON", 4, ".CON", ".CON"},
     {" CON", 4, " CON", " CON"},
@@ -64,85 +61,12 @@ constexpr NameCase kNames[] = {
     {"LPT10", 5, "LPT10", "LPT10"},
     {"COM", 3, "COM", "COM"},
     {"CO", 2, "CO", "CO"},
-    {"COM\xe2"
-     "\x81"
-     "\xb4",
-     6,
-     "COM\xe2"
-     "\x81"
-     "\xb4",
-     "COM\xe2"
-     "\x81"
-     "\xb4"},
-    {"\xe6"
-     "\x97"
-     "\xa5"
-     "\xe6"
-     "\x9c"
-     "\xac"
-     "\xe8"
-     "\xaa"
-     "\x9e",
-     9,
-     "\xe6"
-     "\x97"
-     "\xa5"
-     "\xe6"
-     "\x9c"
-     "\xac"
-     "\xe8"
-     "\xaa"
-     "\x9e",
-     "\xe6"
-     "\x97"
-     "\xa5"
-     "\xe6"
-     "\x9c"
-     "\xac"
-     "\xe8"
-     "\xaa"
-     "\x9e"},
-    {"\xc3"
-     "\xa9"
-     "t\xc3"
-     "\xa9"
-     ".mid",
-     9,
-     "\xc3"
-     "\xa9"
-     "t\xc3"
-     "\xa9"
-     ".mid",
-     "\xc3"
-     "\xa9"
-     "t\xc3"
-     "\xa9"
-     ".mid"},
-    {"\xc3"
-     "\xa9"
-     "t\xc3"
-     "\xa9"
-     ".",
-     6,
-     "\xc3"
-     "\xa9"
-     "t\xc3"
-     "\xa9"
-     "_",
-     "\xc3"
-     "\xa9"
-     "t\xc3"
-     "\xa9"},
-    {"caf\xc3"
-     "\xa9"
-     " ?.mid",
-     11,
-     "caf\xc3"
-     "\xa9"
-     " _.mid",
-     "caf\xc3"
-     "\xa9"
-     " _.mid"},
+    {"COM\xe2\x81\xb4", 6, "COM\xe2\x81\xb4", "COM\xe2\x81\xb4"},
+    {"\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e", 9, "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e",
+     "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e"},
+    {"\xc3\xa9t\xc3\xa9.mid", 9, "\xc3\xa9t\xc3\xa9.mid", "\xc3\xa9t\xc3\xa9.mid"},
+    {"\xc3\xa9t\xc3\xa9.", 6, "\xc3\xa9t\xc3\xa9_", "\xc3\xa9t\xc3\xa9"},
+    {"caf\xc3\xa9 ?.mid", 11, "caf\xc3\xa9 _.mid", "caf\xc3\xa9 _.mid"},
     {"CON", 3, "CON_", "_CON"},
     {"con.mid", 7, "con_.mid", "_con.mid"},
     {"CON.x.sf2", 9, "CON_.x.sf2", "_CON.x.sf2"},
@@ -273,288 +197,36 @@ constexpr NameCase kNames[] = {
     {"LPT9.x.sf2", 10, "LPT9_.x.sf2", "_LPT9.x.sf2"},
     {"LPT9 ", 5, "LPT9_", "_LPT9"},
     {"LPT9 .sfz", 9, "LPT9 _.sfz", "LPT9 .sfz"},
-    {"COM\xc2"
-     "\xb9",
-     5,
-     "COM\xc2"
-     "\xb9"
-     "_",
-     "_COM\xc2"
-     "\xb9"},
-    {"com\xc2"
-     "\xb9"
-     ".mid",
-     9,
-     "com\xc2"
-     "\xb9"
-     "_.mid",
-     "_com\xc2"
-     "\xb9"
-     ".mid"},
-    {"COM\xc2"
-     "\xb9"
-     ".x.sf2",
-     11,
-     "COM\xc2"
-     "\xb9"
-     "_.x.sf2",
-     "_COM\xc2"
-     "\xb9"
-     ".x.sf2"},
-    {"COM\xc2"
-     "\xb9"
-     " ",
-     6,
-     "COM\xc2"
-     "\xb9"
-     "_",
-     "_COM\xc2"
-     "\xb9"},
-    {"COM\xc2"
-     "\xb9"
-     " .sfz",
-     10,
-     "COM\xc2"
-     "\xb9"
-     " _.sfz",
-     "COM\xc2"
-     "\xb9"
-     " .sfz"},
-    {"COM\xc2"
-     "\xb2",
-     5,
-     "COM\xc2"
-     "\xb2"
-     "_",
-     "_COM\xc2"
-     "\xb2"},
-    {"com\xc2"
-     "\xb2"
-     ".mid",
-     9,
-     "com\xc2"
-     "\xb2"
-     "_.mid",
-     "_com\xc2"
-     "\xb2"
-     ".mid"},
-    {"COM\xc2"
-     "\xb2"
-     ".x.sf2",
-     11,
-     "COM\xc2"
-     "\xb2"
-     "_.x.sf2",
-     "_COM\xc2"
-     "\xb2"
-     ".x.sf2"},
-    {"COM\xc2"
-     "\xb2"
-     " ",
-     6,
-     "COM\xc2"
-     "\xb2"
-     "_",
-     "_COM\xc2"
-     "\xb2"},
-    {"COM\xc2"
-     "\xb2"
-     " .sfz",
-     10,
-     "COM\xc2"
-     "\xb2"
-     " _.sfz",
-     "COM\xc2"
-     "\xb2"
-     " .sfz"},
-    {"COM\xc2"
-     "\xb3",
-     5,
-     "COM\xc2"
-     "\xb3"
-     "_",
-     "_COM\xc2"
-     "\xb3"},
-    {"com\xc2"
-     "\xb3"
-     ".mid",
-     9,
-     "com\xc2"
-     "\xb3"
-     "_.mid",
-     "_com\xc2"
-     "\xb3"
-     ".mid"},
-    {"COM\xc2"
-     "\xb3"
-     ".x.sf2",
-     11,
-     "COM\xc2"
-     "\xb3"
-     "_.x.sf2",
-     "_COM\xc2"
-     "\xb3"
-     ".x.sf2"},
-    {"COM\xc2"
-     "\xb3"
-     " ",
-     6,
-     "COM\xc2"
-     "\xb3"
-     "_",
-     "_COM\xc2"
-     "\xb3"},
-    {"COM\xc2"
-     "\xb3"
-     " .sfz",
-     10,
-     "COM\xc2"
-     "\xb3"
-     " _.sfz",
-     "COM\xc2"
-     "\xb3"
-     " .sfz"},
-    {"LPT\xc2"
-     "\xb9",
-     5,
-     "LPT\xc2"
-     "\xb9"
-     "_",
-     "_LPT\xc2"
-     "\xb9"},
-    {"lpt\xc2"
-     "\xb9"
-     ".mid",
-     9,
-     "lpt\xc2"
-     "\xb9"
-     "_.mid",
-     "_lpt\xc2"
-     "\xb9"
-     ".mid"},
-    {"LPT\xc2"
-     "\xb9"
-     ".x.sf2",
-     11,
-     "LPT\xc2"
-     "\xb9"
-     "_.x.sf2",
-     "_LPT\xc2"
-     "\xb9"
-     ".x.sf2"},
-    {"LPT\xc2"
-     "\xb9"
-     " ",
-     6,
-     "LPT\xc2"
-     "\xb9"
-     "_",
-     "_LPT\xc2"
-     "\xb9"},
-    {"LPT\xc2"
-     "\xb9"
-     " .sfz",
-     10,
-     "LPT\xc2"
-     "\xb9"
-     " _.sfz",
-     "LPT\xc2"
-     "\xb9"
-     " .sfz"},
-    {"LPT\xc2"
-     "\xb2",
-     5,
-     "LPT\xc2"
-     "\xb2"
-     "_",
-     "_LPT\xc2"
-     "\xb2"},
-    {"lpt\xc2"
-     "\xb2"
-     ".mid",
-     9,
-     "lpt\xc2"
-     "\xb2"
-     "_.mid",
-     "_lpt\xc2"
-     "\xb2"
-     ".mid"},
-    {"LPT\xc2"
-     "\xb2"
-     ".x.sf2",
-     11,
-     "LPT\xc2"
-     "\xb2"
-     "_.x.sf2",
-     "_LPT\xc2"
-     "\xb2"
-     ".x.sf2"},
-    {"LPT\xc2"
-     "\xb2"
-     " ",
-     6,
-     "LPT\xc2"
-     "\xb2"
-     "_",
-     "_LPT\xc2"
-     "\xb2"},
-    {"LPT\xc2"
-     "\xb2"
-     " .sfz",
-     10,
-     "LPT\xc2"
-     "\xb2"
-     " _.sfz",
-     "LPT\xc2"
-     "\xb2"
-     " .sfz"},
-    {"LPT\xc2"
-     "\xb3",
-     5,
-     "LPT\xc2"
-     "\xb3"
-     "_",
-     "_LPT\xc2"
-     "\xb3"},
-    {"lpt\xc2"
-     "\xb3"
-     ".mid",
-     9,
-     "lpt\xc2"
-     "\xb3"
-     "_.mid",
-     "_lpt\xc2"
-     "\xb3"
-     ".mid"},
-    {"LPT\xc2"
-     "\xb3"
-     ".x.sf2",
-     11,
-     "LPT\xc2"
-     "\xb3"
-     "_.x.sf2",
-     "_LPT\xc2"
-     "\xb3"
-     ".x.sf2"},
-    {"LPT\xc2"
-     "\xb3"
-     " ",
-     6,
-     "LPT\xc2"
-     "\xb3"
-     "_",
-     "_LPT\xc2"
-     "\xb3"},
-    {"LPT\xc2"
-     "\xb3"
-     " .sfz",
-     10,
-     "LPT\xc2"
-     "\xb3"
-     " _.sfz",
-     "LPT\xc2"
-     "\xb3"
-     " .sfz"},
+    {"COM\xc2\xb9", 5, "COM\xc2\xb9_", "_COM\xc2\xb9"},
+    {"com\xc2\xb9.mid", 9, "com\xc2\xb9_.mid", "_com\xc2\xb9.mid"},
+    {"COM\xc2\xb9.x.sf2", 11, "COM\xc2\xb9_.x.sf2", "_COM\xc2\xb9.x.sf2"},
+    {"COM\xc2\xb9 ", 6, "COM\xc2\xb9_", "_COM\xc2\xb9"},
+    {"COM\xc2\xb9 .sfz", 10, "COM\xc2\xb9 _.sfz", "COM\xc2\xb9 .sfz"},
+    {"COM\xc2\xb2", 5, "COM\xc2\xb2_", "_COM\xc2\xb2"},
+    {"com\xc2\xb2.mid", 9, "com\xc2\xb2_.mid", "_com\xc2\xb2.mid"},
+    {"COM\xc2\xb2.x.sf2", 11, "COM\xc2\xb2_.x.sf2", "_COM\xc2\xb2.x.sf2"},
+    {"COM\xc2\xb2 ", 6, "COM\xc2\xb2_", "_COM\xc2\xb2"},
+    {"COM\xc2\xb2 .sfz", 10, "COM\xc2\xb2 _.sfz", "COM\xc2\xb2 .sfz"},
+    {"COM\xc2\xb3", 5, "COM\xc2\xb3_", "_COM\xc2\xb3"},
+    {"com\xc2\xb3.mid", 9, "com\xc2\xb3_.mid", "_com\xc2\xb3.mid"},
+    {"COM\xc2\xb3.x.sf2", 11, "COM\xc2\xb3_.x.sf2", "_COM\xc2\xb3.x.sf2"},
+    {"COM\xc2\xb3 ", 6, "COM\xc2\xb3_", "_COM\xc2\xb3"},
+    {"COM\xc2\xb3 .sfz", 10, "COM\xc2\xb3 _.sfz", "COM\xc2\xb3 .sfz"},
+    {"LPT\xc2\xb9", 5, "LPT\xc2\xb9_", "_LPT\xc2\xb9"},
+    {"lpt\xc2\xb9.mid", 9, "lpt\xc2\xb9_.mid", "_lpt\xc2\xb9.mid"},
+    {"LPT\xc2\xb9.x.sf2", 11, "LPT\xc2\xb9_.x.sf2", "_LPT\xc2\xb9.x.sf2"},
+    {"LPT\xc2\xb9 ", 6, "LPT\xc2\xb9_", "_LPT\xc2\xb9"},
+    {"LPT\xc2\xb9 .sfz", 10, "LPT\xc2\xb9 _.sfz", "LPT\xc2\xb9 .sfz"},
+    {"LPT\xc2\xb2", 5, "LPT\xc2\xb2_", "_LPT\xc2\xb2"},
+    {"lpt\xc2\xb2.mid", 9, "lpt\xc2\xb2_.mid", "_lpt\xc2\xb2.mid"},
+    {"LPT\xc2\xb2.x.sf2", 11, "LPT\xc2\xb2_.x.sf2", "_LPT\xc2\xb2.x.sf2"},
+    {"LPT\xc2\xb2 ", 6, "LPT\xc2\xb2_", "_LPT\xc2\xb2"},
+    {"LPT\xc2\xb2 .sfz", 10, "LPT\xc2\xb2 _.sfz", "LPT\xc2\xb2 .sfz"},
+    {"LPT\xc2\xb3", 5, "LPT\xc2\xb3_", "_LPT\xc2\xb3"},
+    {"lpt\xc2\xb3.mid", 9, "lpt\xc2\xb3_.mid", "_lpt\xc2\xb3.mid"},
+    {"LPT\xc2\xb3.x.sf2", 11, "LPT\xc2\xb3_.x.sf2", "_LPT\xc2\xb3.x.sf2"},
+    {"LPT\xc2\xb3 ", 6, "LPT\xc2\xb3_", "_LPT\xc2\xb3"},
+    {"LPT\xc2\xb3 .sfz", 10, "LPT\xc2\xb3 _.sfz", "LPT\xc2\xb3 .sfz"},
 };
 
 // Every trailing dot and space removed, the mark before a device name, all_devices off, and "output" for an empty name.

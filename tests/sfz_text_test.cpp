@@ -62,44 +62,12 @@ constexpr CommentCase kComments[] = {
     {"line\x0a"
      "break",
      10, "line break"},
-    {"tab\x09"
-     "here",
-     8, "tab here"},
-    {"\x0d"
-     "\x0a",
-     2, "  "},
-    {"nul\x00"
-     "inside",
-     10, "nul inside"},
-    {"\x01"
-     "\x1f"
-     " ~\x7f",
-     5, "   ~ "},
-    {"UTF-8: \xc3"
-     "\xa9"
-     " \xe6"
-     "\x97"
-     "\xa5"
-     "\xe6"
-     "\x9c"
-     "\xac"
-     " \xf0"
-     "\x9f"
-     "\x8e"
-     "\xb5",
-     21,
-     "UTF-8: \xc3"
-     "\xa9"
-     " \xe6"
-     "\x97"
-     "\xa5"
-     "\xe6"
-     "\x9c"
-     "\xac"
-     " \xf0"
-     "\x9f"
-     "\x8e"
-     "\xb5"},
+    {"tab\x09here", 8, "tab here"},
+    {"\x0d\x0a", 2, "  "},
+    {"nul\x00inside", 10, "nul inside"},
+    {"\x01\x1f ~\x7f", 5, "   ~ "},
+    {"UTF-8: \xc3\xa9 \xe6\x97\xa5\xe6\x9c\xac \xf0\x9f\x8e\xb5", 21,
+     "UTF-8: \xc3\xa9 \xe6\x97\xa5\xe6\x9c\xac \xf0\x9f\x8e\xb5"},
 };
 
 // The curve from CC10 to pan.

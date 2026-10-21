@@ -57,7 +57,7 @@ SEQLIB_TEST(presets, Channel10Copy)
 
     sf2::AddChannel10Copy(sf, 1, warnings);
 
-    SEQLIB_CHECK(warnings.empty() && sf.presets.size() == 3);
+    SEQLIB_REQUIRE(warnings.empty() && sf.presets.size() == 3);
     const sf2::Preset& copy = sf.presets[2];
     SEQLIB_CHECK(copy.name == "b0 p6" && copy.bank == sf2::kChannel10Bank && copy.program == 6);
     SEQLIB_CHECK(copy.zones.size() == 1 && copy.zones[0].generators.size() == 1);
@@ -107,17 +107,22 @@ SEQLIB_TEST(presets, RegionZoneWritesEveryGenerator)
     values.exclusive_class = 5;
     values.sample = 9;
 
+    const sf2::Zone zone = sf2::RegionZone(values);
+
+    // The attenuation is 2.5 times 123.4 cB, rounded (units_test.cpp has the rule).
     const std::vector<std::pair<uint16_t, uint16_t>> kExpected = {
-        {43, 18468}, {44, 25601}, {48, 123}, {17, 65286}, {33, 57563}, {34, 54536}, {35, 60536}, {36, 1200},
+        {43, 18468}, {44, 25601}, {48, 309}, {17, 65286}, {33, 57563}, {34, 54536}, {35, 60536}, {36, 1200},
         {37, 960},   {38, 2400},  {58, 62},  {51, 65534}, {52, 37},    {54, 1},     {57, 5},     {53, 9},
     };
-    SEQLIB_CHECK(Generators(sf2::RegionZone(values)) == kExpected);
+    SEQLIB_CHECK(Generators(zone) == kExpected);
+    SEQLIB_CHECK(zone.modulators.empty());
 }
 
+// Below 0.2 cB, 2.5 times the attenuation is below 0.5 cB. It rounds to no attenuation.
 SEQLIB_TEST(presets, RegionZoneLeavesOutZeros)
 {
     sf2::ZoneValues values;
-    values.attenuation = 0.4;
+    values.attenuation = 0.1;
     values.sample = 3;
 
     const std::vector<std::pair<uint16_t, uint16_t>> kExpected = {
@@ -126,19 +131,39 @@ SEQLIB_TEST(presets, RegionZoneLeavesOutZeros)
     SEQLIB_CHECK(Generators(sf2::RegionZone(values)) == kExpected);
 }
 
-SEQLIB_TEST(presets, RegionZoneRoundsAndLimitsTheAttenuation)
+// The zone's attenuation as ToZoneAttenuation gives it: the generator, 48, holds 2.5 times the attenuation up to its
+// limit of 1440 cB. A modulator from No Controller, 0, holds the attenuation beyond 576 cB (units_test.cpp).
+SEQLIB_TEST(presets, RegionZoneScalesTheAttenuation)
 {
-    auto attenuation = [](double centibels)
+    auto zone = [](double centibels)
     {
         sf2::ZoneValues values;
         values.attenuation = centibels;
-        const std::vector<std::pair<uint16_t, uint16_t>> generators = Generators(sf2::RegionZone(values));
+        return sf2::RegionZone(values);
+    };
+    auto generator = [](const sf2::Zone& z)
+    {
+        const std::vector<std::pair<uint16_t, uint16_t>> generators = Generators(z);
         return generators.size() > 2 && generators[2].first == 48 ? generators[2].second : 0;
     };
+    auto modulator = [](const sf2::Zone& z)
+    {
+        const bool attenuates = z.modulators.size() == 1 && z.modulators[0].source == 0 && z.modulators[0].dest == 48 &&
+                                z.modulators[0].amount_source == 0 && z.modulators[0].transform == 0;
+        return attenuates ? z.modulators[0].amount : 0;
+    };
 
-    SEQLIB_CHECK(attenuation(1500.0) == 1440);
-    SEQLIB_CHECK(attenuation(2.5) == 3);
-    SEQLIB_CHECK(attenuation(-3.0) == 0);
+    const sf2::Zone quiet = zone(200.0);
+    const sf2::Zone quieter = zone(700.0);
+    const sf2::Zone silent = zone(1500.0);
+    const sf2::Zone rounded = zone(2.5);
+    const sf2::Zone none = zone(-3.0);
+
+    SEQLIB_CHECK(generator(quiet) == 500 && quiet.modulators.empty());
+    SEQLIB_CHECK(generator(quieter) == 1440 && modulator(quieter) == 124);
+    SEQLIB_CHECK(generator(silent) == 1440 && modulator(silent) == 864);
+    SEQLIB_CHECK(generator(rounded) == 6 && rounded.modulators.empty());
+    SEQLIB_CHECK(generator(none) == 0 && none.modulators.empty());
 }
 
 SEQLIB_TEST(presets, AddInstrumentPreset)

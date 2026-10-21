@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+// Reading Standard MIDI Files (see reader.h).
+
 #include "seqlib/midi/reader.h"
 
 #include <algorithm>

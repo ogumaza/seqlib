@@ -5,7 +5,10 @@
 
 #include "seqlib/midi/builder.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "test.h"
@@ -146,6 +149,67 @@ SEQLIB_TEST(builder, KeyPressureSortsBeforeNoteOns)
         0x00, 0xFF, 0x2F, 0x00, // end of track
     };
     SEQLIB_CHECK(track.Encode() == kExpected);
+}
+
+// A system exclusive message goes after the meta events at its tick and before the note-offs and key pressures. Its
+// event holds F0, the number of bytes after F0 as a variable-length quantity, then those bytes. The Standard MIDI File
+// specification stores the message F0 43 12 00 07 F7 as F0 05 43 12 00 07 F7. A message of 130 bytes has 129 bytes
+// after its F0. That length takes two bytes.
+SEQLIB_TEST(builder, SysExSortsAfterMetaEvents)
+{
+    std::vector<uint8_t> long_message(130, 0x55);
+    long_message.front() = 0xF0;
+    long_message.back() = 0xF7;
+    TrackBuilder track;
+    track.KeyPressure(0, 1, 60, 127);
+    track.NoteOff(0, 1, 62);
+    track.SysEx(0, {0xF0, 0x43, 0x12, 0x00, 0x07, 0xF7});
+    track.Meta(0, 0x06, "A");
+    track.NoteOn(0, 1, 60, 100);
+    track.SysEx(0, {0xF0, 0xF7});
+    track.SysEx(1, long_message);
+
+    const std::vector<uint8_t> actual = track.Encode();
+
+    std::vector<uint8_t> expected = {
+        0x00, 0xFF, 0x06, 0x01, 0x41,                   // marker "A"
+        0x00, 0xF0, 0x05, 0x43, 0x12, 0x00, 0x07, 0xF7, // the specification's example
+        0x00, 0xF0, 0x01, 0xF7,                         // a message without data bytes
+        0x00, 0x81, 0x3E, 0x00,                         // note off
+        0x00, 0xA1, 0x3C, 0x7F,                         // key pressure
+        0x00, 0x91, 0x3C, 0x64,                         // note on
+        0x01, 0xF0, 0x81, 0x01,                         // the long message's F0 and length
+    };
+    expected.insert(expected.end(), 128, 0x55);
+    expected.insert(expected.end(), {0xF7, 0x00, 0xFF, 0x2F, 0x00}); // its F7, then the end of the track
+    SEQLIB_CHECK(actual == expected);
+}
+
+// SysEx refuses a message that doesn't start with F0 and end with F7, or that has a byte above 127 between them. The
+// track gets no event from it.
+SEQLIB_TEST(builder, SysExRefusesMalformedMessages)
+{
+    const std::vector<std::vector<uint8_t>> kRefused = {
+        {},
+        {0xF0},
+        {0xF7},
+        {0x43, 0xF7},
+        {0xF0, 0x43},
+        {0xF7, 0x43, 0xF0},
+        {0xF0, 0x80, 0xF7},
+        {0xF0, 0xF7, 0x43, 0xF7},
+    };
+    TrackBuilder track;
+
+    for (std::size_t i = 0; i < kRefused.size(); i++)
+    {
+        seqlib::test::SetContext("message " + std::to_string(i));
+        const std::string error = seqlib::testing::ErrorOf<std::invalid_argument>([&] { track.SysEx(0, kRefused[i]); });
+        SEQLIB_CHECK(!error.empty());
+    }
+    seqlib::test::SetContext("");
+
+    SEQLIB_CHECK(track.Encode() == std::vector<uint8_t>({0x00, 0xFF, 0x2F, 0x00}));
 }
 
 // BendRange writes the events of six Control() calls. They keep their place among the tick's other events.

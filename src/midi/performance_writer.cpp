@@ -13,6 +13,7 @@
 #include <optional>
 #include <utility>
 
+#include "seqlib/midi/controllers.h"
 #include "seqlib/midi/encoder.h"
 
 namespace seqlib::midi
@@ -279,7 +280,7 @@ TrackEncoder ConductorTrack(const Performance& perf, const std::string& title,
         conductor.Meta(start * scale, 0x06, "loopStart");
         if (first_channel >= 0)
         {
-            conductor.Event(start * scale, {static_cast<uint8_t>(0xb0 | first_channel), 111, 0});
+            conductor.Event(start * scale, {static_cast<uint8_t>(0xb0 | first_channel), cc::kLoopStart, 0});
         }
 
         // A player that loops goes back to the event after the marker, or after CC111. A tempo change on the loop's
@@ -332,17 +333,17 @@ std::optional<uint8_t> ControllerFor(EventKind kind)
     switch (kind)
     {
     case EventKind::kVolume:
-        return 7;
+        return cc::kVolume;
     case EventKind::kExpression:
-        return 11;
+        return cc::kExpression;
     case EventKind::kPan:
-        return 10;
+        return cc::kPan;
     case EventKind::kModulation:
-        return 1;
+        return cc::kModulation;
     case EventKind::kReverb:
-        return 91;
+        return cc::kReverb;
     case EventKind::kChorus:
-        return 93;
+        return cc::kChorus;
     default:
         return IsControlKind(kind) ? std::optional<uint8_t>(ControllerOf(kind)) : std::nullopt;
     }
@@ -425,12 +426,12 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
     {
         every[l] = l;
     }
-    send(0, every, {0xb0, 101, 0});
-    send(0, every, {0xb0, 100, 0});
-    send(0, every, {0xb0, 6, static_cast<uint8_t>(range)});
-    send(0, every, {0xb0, 38, 0});
-    send(0, every, {0xb0, 101, 127});
-    send(0, every, {0xb0, 100, 127});
+    send(0, every, {0xb0, cc::kRpnMsb, 0});
+    send(0, every, {0xb0, cc::kRpnLsb, 0});
+    send(0, every, {0xb0, cc::kDataEntry, static_cast<uint8_t>(range)});
+    send(0, every, {0xb0, cc::kDataEntryLsb, 0});
+    send(0, every, {0xb0, cc::kRpnMsb, 127});
+    send(0, every, {0xb0, cc::kRpnLsb, 127});
 
     std::vector<std::array<uint32_t, 128>> sounding(layers.size()); // note id per key, 0: free
     std::vector<std::array<uint32_t, 128>> since(layers.size());    // that note's start time
@@ -482,8 +483,8 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
 
         case EventKind::kPreset:
             {
-                send(at, mine, {0xb0, 0, static_cast<uint8_t>((e.preset >> 7) & 0x7f)});
-                send(at, mine, {0xb0, 32, 0});
+                send(at, mine, {0xb0, cc::kBankSelect, static_cast<uint8_t>((e.preset >> 7) & 0x7f)});
+                send(at, mine, {0xb0, cc::kBankSelectLsb, 0});
                 send(at, mine, {0xc0, static_cast<uint8_t>(e.preset & 0x7f)});
 
                 // Synths play bank 128 on the drum channel. sf2::AddChannel10Copy copies the preset there.
@@ -499,7 +500,7 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
             }
 
         case EventKind::kSoundOff:
-            send(at, mine, {0xb0, 120, 0});
+            send(at, mine, {0xb0, cc::kAllSoundOff, 0});
             break;
 
         case EventKind::kPitch:

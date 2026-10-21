@@ -6,6 +6,7 @@
 #include "seqlib/sf2/units.h"
 
 #include <cmath>
+#include <limits>
 #include <string>
 
 #include "test.h"
@@ -163,6 +164,52 @@ constexpr UnlimitedTimecentsCase kUnlimitedTimecents[] = {
     {16742.706298828125, 4879},  {68561.382293701172, 7319}, {1097233.2572937012, 12120}, {16742706.298828125, 16837},
 };
 
+// LFO frequencies by SoundFont 2.01, sections 8.1.2 and 8.1.3: 8.176 Hz is 0 cents, an octave is 1200 cents, 10 mHz is
+// -11610 cents, and the generators run from -16000 to 4500 cents.
+struct LfoCase
+{
+    double hz;
+    int expected;
+};
+
+constexpr LfoCase kLfoFrequencies[] = {
+    {8.176, 0}, {16.352, 1200}, {4.088, -1200}, {0.01, -11610}, {1000.0, 4500}, {0.0001, -16000},
+};
+
+// Attenuations in the form that zones hold them. SoundFont 2.04 gives initialAttenuation, generator 48, a range of 0 to
+// 1440 cB (section 8.1.3). The generator holds 2.5 times the attenuation, rounded to the nearest centibel, up to that
+// limit. Synthesizers that apply 0.4 of the generator play its limit as 576 cB. Beyond that, a modulator holds the
+// rest, rounded to the nearest centibel. Its source and amount source are 0, No Controller. Section 8.2.1 counts No
+// Controller as 1. The modulator's destination is 48. Its transform is 0, linear. Its amount adds to the generator's
+// value (sections 7.8 and 9.5.1).
+struct ZoneAttenuationCase
+{
+    double centibels;
+    int generator;
+    int modulator; // the modulator's amount, or 0 for no modulator
+};
+
+constexpr ZoneAttenuationCase kZoneAttenuations[] = {
+    {-std::numeric_limits<double>::infinity(), 0, 0},
+    {-3.0, 0, 0},
+    {0.0, 0, 0},
+    {0.1, 0, 0},
+    {0.4, 1, 0},
+    {2.5, 6, 0},      // 6.25 rounds down
+    {60.0, 150, 0},   // section 8.1.2's example, 6 dB below full scale
+    {123.4, 309, 0},  // 308.5 rounds away from zero
+    {200.0, 500, 0},  // 20 dB
+    {575.9, 1440, 0}, // 1439.75 rounds up to the limit
+    {576.0, 1440, 0}, // the limit, played as 576 cB
+    {576.4, 1440, 0}, // 0.4 cB more rounds to no modulator
+    {576.5, 1440, 1}, // 0.5 cB more rounds away from zero
+    {700.0, 1440, 124},
+    {1440.0, 1440, 864},
+    {1500.0, 1440, 864}, // held to 1440 cB
+    {std::numeric_limits<double>::infinity(), 1440, 864},
+    {std::numeric_limits<double>::quiet_NaN(), 0, 0},
+};
+
 // Math libraries can round atan differently in its last bits. Near a pan of 0.5, SoundFontPan's subtraction of 1
 // magnifies that to a few ulps of its result. The rounded values that reach a file still have to match exactly (see
 // RoundedPans).
@@ -186,6 +233,15 @@ SEQLIB_TEST(units, ToTimecentsWithNoLimits)
     }
 }
 
+SEQLIB_TEST(units, LfoFrequencies)
+{
+    for (const LfoCase& c : kLfoFrequencies)
+    {
+        seqlib::test::SetContext("hz " + std::to_string(c.hz));
+        SEQLIB_CHECK(seqlib::sf2::LfoFrequency(c.hz) == c.expected);
+    }
+}
+
 SEQLIB_TEST(units, SoundFontPans)
 {
     for (const PanCase& c : kPans)
@@ -205,6 +261,41 @@ SEQLIB_TEST(units, RoundedPans)
         SEQLIB_CHECK(std::lround(pan * 500.0) == expected.generator);
         SEQLIB_CHECK(std::lround(pan * 1000.0) == expected.tenths);
         SEQLIB_CHECK(std::lround(64.0 + pan * 64.0) == expected.midi || (expected.midi == 127 && pan == 1.0));
+    }
+}
+
+SEQLIB_TEST(units, ZoneAttenuations)
+{
+    for (const ZoneAttenuationCase& c : kZoneAttenuations)
+    {
+        seqlib::test::SetContext("cB " + std::to_string(c.centibels));
+
+        const seqlib::sf2::ZoneAttenuation attenuation = seqlib::sf2::ToZoneAttenuation(c.centibels);
+
+        SEQLIB_CHECK(attenuation.generator == c.generator);
+        SEQLIB_REQUIRE(attenuation.modulator.has_value() == (c.modulator != 0));
+        if (attenuation.modulator)
+        {
+            const seqlib::sf2::Modulator& m = *attenuation.modulator;
+            SEQLIB_CHECK(m.source == 0 && m.dest == 48 && m.amount == c.modulator);
+            SEQLIB_CHECK(m.amount_source == 0 && m.transform == 0);
+        }
+    }
+}
+
+// In a synthesizer that applies 0.4 of the generator and all of the modulator, every attenuation from 0 to 1440 cB
+// plays to within 0.2 cB up to 576 cB, and to within 0.5 cB above it.
+SEQLIB_TEST(units, ZoneAttenuationsPlayAtTheirLevel)
+{
+    for (int tenths = 0; tenths <= 14400; tenths++)
+    {
+        const double centibels = tenths / 10.0;
+        seqlib::test::SetContext("cB " + std::to_string(centibels));
+
+        const seqlib::sf2::ZoneAttenuation attenuation = seqlib::sf2::ToZoneAttenuation(centibels);
+
+        const double played = 0.4 * attenuation.generator + (attenuation.modulator ? attenuation.modulator->amount : 0);
+        SEQLIB_CHECK(std::abs(played - centibels) <= (centibels <= 576.0 ? 0.2 : 0.5) + 1e-9);
     }
 }
 

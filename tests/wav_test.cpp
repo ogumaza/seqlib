@@ -157,17 +157,9 @@ SEQLIB_TEST(wav, Refusals)
 {
     const auto refused = [](const seqlib::Pcm& pcm)
     {
-        try
-        {
-            seqlib::WavFile(pcm, 32000);
-        }
-        catch (const std::invalid_argument&)
-        {
-            return true;
-        }
-
-        return false;
+        return !seqlib::testing::ErrorOf<std::invalid_argument>([&] { seqlib::WavFile(pcm, 32000); }).empty();
     };
+
     seqlib::Pcm none;
     seqlib::Pcm uneven;
     uneven.channels = {{1, 2}, {3}};
@@ -189,12 +181,12 @@ SEQLIB_TEST(wav, Refusals)
     SEQLIB_CHECK(!refused(whole_loop));
 }
 
-// Appends `value` to `out` in `bytes` little-endian bytes.
+// Appends `value` to `out` in `bytes` little-endian bytes. Bytes past the value's eight are 0.
 void Append(std::vector<uint8_t>& out, uint64_t value, std::size_t bytes)
 {
     for (std::size_t i = 0; i < bytes; i++)
     {
-        out.push_back(static_cast<uint8_t>(value >> (8 * i)));
+        out.push_back(i < 8 ? static_cast<uint8_t>(value >> (8 * i)) : 0);
     }
 }
 
@@ -213,6 +205,7 @@ std::vector<uint8_t> Riff(const std::vector<std::pair<std::string, std::vector<u
             body.push_back(0);
         }
     }
+
     std::vector<uint8_t> file = {'R', 'I', 'F', 'F'};
     Append(file, body.size(), 4);
     file.insert(file.end(), body.begin(), body.end());
@@ -322,9 +315,9 @@ SEQLIB_TEST(wav, ReadSampleFormats)
 {
     const std::vector<uint8_t> eight = Riff({{"fmt ", Format(1, 1, 8000, 1, 8)}, {"data", {0, 128, 255, 1}}});
     const std::vector<uint8_t> twelve = Riff({{"fmt ", Format(1, 1, 8000, 2, 12)}, {"data", {0x30, 0x12}}});
-    const std::vector<uint8_t> deep_samples = {0xFF, 0xFF, 0x7F, 0x00, 0x00, 0x80, 0x80, 0x00, 0x00,
+    const std::vector<uint8_t> kDeepSamples = {0xFF, 0xFF, 0x7F, 0x00, 0x00, 0x80, 0x80, 0x00, 0x00,
                                                0x7F, 0x00, 0x00, 0x80, 0xFF, 0xFF, 0x7F, 0xFF, 0xFF};
-    const std::vector<uint8_t> deep = Riff({{"fmt ", Format(1, 1, 8000, 3, 24)}, {"data", deep_samples}});
+    const std::vector<uint8_t> deep = Riff({{"fmt ", Format(1, 1, 8000, 3, 24)}, {"data", kDeepSamples}});
     std::vector<uint8_t> words;
     for (const uint32_t word : {0x7FFFFFFFu, 0x80000000u, 0x00008000u, 0x00007FFFu, 0x12345678u})
     {
@@ -332,12 +325,12 @@ SEQLIB_TEST(wav, ReadSampleFormats)
     }
     const std::vector<uint8_t> wide = Riff({{"fmt ", Format(1, 1, 8000, 4, 32)}, {"data", words}});
     const float kNan = std::numeric_limits<float>::quiet_NaN();
-    const std::vector<float> singles = {0.5f, -1.0f, 1.0f, 2.0f, kNan, 1.0f / 65536.0f, -1.0f / 65536.0f};
-    const std::vector<uint8_t> single = Riff({{"fmt ", Format(3, 1, 8000, 4, 32)}, {"data", Reals(singles)}});
+    const std::vector<float> kSingles = {0.5f, -1.0f, 1.0f, 2.0f, kNan, 1.0f / 65536.0f, -1.0f / 65536.0f};
+    const std::vector<uint8_t> single = Riff({{"fmt ", Format(3, 1, 8000, 4, 32)}, {"data", Reals(kSingles)}});
     const std::vector<uint8_t> twice =
         Riff({{"fmt ", Format(3, 1, 8000, 8, 64)}, {"data", Reals(std::vector<double>{0.25, -0.5})}});
-    const std::vector<uint8_t> frames = {0x00, 0x01, 0x00, 0x80, 0xFF, 0xFF, 0x00, 0x02, 0x00, 0x00, 0x00, 0x80};
-    const std::vector<uint8_t> extensible = Riff({{"fmt ", Extensible(1, 2, 8000, 6, 24)}, {"data", frames}});
+    const std::vector<uint8_t> kFrames = {0x00, 0x01, 0x00, 0x80, 0xFF, 0xFF, 0x00, 0x02, 0x00, 0x00, 0x00, 0x80};
+    const std::vector<uint8_t> extensible = Riff({{"fmt ", Extensible(1, 2, 8000, 6, 24)}, {"data", kFrames}});
     const std::vector<uint8_t> extensible_float =
         Riff({{"fmt ", Extensible(3, 1, 8000, 4, 32)}, {"data", Reals(std::vector<float>{-0.25f})}});
 
@@ -397,44 +390,36 @@ SEQLIB_TEST(wav, ReadRefusals)
 {
     const auto refused = [](const std::vector<uint8_t>& bytes)
     {
-        try
-        {
-            seqlib::ReadWav(bytes);
-        }
-        catch (const seqlib::ReadError&)
-        {
-            return true;
-        }
-
-        return false;
+        return !seqlib::testing::ErrorOf<seqlib::ReadError>([&] { seqlib::ReadWav(bytes); }).empty();
     };
-    const std::vector<uint8_t> data = {0, 0, 0, 0};
-    std::vector<uint8_t> avi = Riff({{"fmt ", Format(1, 1, 8000, 2, 16)}, {"data", data}});
+
+    const std::vector<uint8_t> kData = {0, 0, 0, 0};
+    std::vector<uint8_t> avi = Riff({{"fmt ", Format(1, 1, 8000, 2, 16)}, {"data", kData}});
     std::memcpy(avi.data() + 8, "AVI ", 4);
-    std::vector<uint8_t> past = Riff({{"fmt ", Format(1, 1, 8000, 2, 16)}, {"data", data}});
+    std::vector<uint8_t> past = Riff({{"fmt ", Format(1, 1, 8000, 2, 16)}, {"data", kData}});
     past.resize(past.size() - 1);
     std::vector<uint8_t> short_format = Format(1, 1, 8000, 2, 16);
     short_format.resize(14);
-    const std::string completing = {'\x10', '\x00', 'x', 'x'};
+    const std::string kCompleting = {'\x10', '\x00', 'x', 'x'};
     std::vector<uint8_t> other_guid = Extensible(1, 1, 8000, 2, 16);
     other_guid[26] = 0x21;
     other_guid[27] = 0x07;
 
     SEQLIB_CHECK(refused({}) && refused(avi) && refused(past));
-    SEQLIB_CHECK(refused(Riff({{"data", data}})) && refused(Riff({{"fmt ", short_format}, {"data", data}})));
-    SEQLIB_CHECK(refused(Riff({{"fmt ", short_format}, {completing, {}}, {"data", data}})));
+    SEQLIB_CHECK(refused(Riff({{"data", kData}})) && refused(Riff({{"fmt ", short_format}, {"data", kData}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", short_format}, {kCompleting, {}}, {"data", kData}})));
     SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 1, 8000, 2, 16)}})));
-    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(2, 1, 8000, 2, 16)}, {"data", data}})));
-    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 0, 8000, 2, 16)}, {"data", data}})));
-    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 1, 0, 2, 16)}, {"data", data}})));
-    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 2, 8000, 3, 8)}, {"data", data}})));
-    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 1, 8000, 2, 24)}, {"data", data}})));
-    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(3, 1, 8000, 2, 16)}, {"data", data}})));
-    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(3, 1, 8000, 4, 24)}, {"data", data}})));
-    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(0xFFFE, 1, 8000, 2, 16)}, {"data", data}})));
-    SEQLIB_CHECK(refused(Riff({{"fmt ", Extensible(2, 1, 8000, 2, 16)}, {"data", data}})));
-    SEQLIB_CHECK(refused(Riff({{"fmt ", other_guid}, {"data", data}})));
-    SEQLIB_CHECK(!refused(Riff({{"fmt ", Format(1, 1, 8000, 2, 16)}, {completing, {}}, {"data", data}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(2, 1, 8000, 2, 16)}, {"data", kData}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 0, 8000, 2, 16)}, {"data", kData}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 1, 0, 2, 16)}, {"data", kData}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 2, 8000, 3, 8)}, {"data", kData}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(1, 1, 8000, 2, 24)}, {"data", kData}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(3, 1, 8000, 2, 16)}, {"data", kData}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(3, 1, 8000, 4, 24)}, {"data", kData}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Format(0xFFFE, 1, 8000, 2, 16)}, {"data", kData}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", Extensible(2, 1, 8000, 2, 16)}, {"data", kData}})));
+    SEQLIB_CHECK(refused(Riff({{"fmt ", other_guid}, {"data", kData}})));
+    SEQLIB_CHECK(!refused(Riff({{"fmt ", Format(1, 1, 8000, 2, 16)}, {kCompleting, {}}, {"data", kData}})));
 }
 
 // The smpl chunk's first loop becomes the loop, with its type and plays. A loop past the samples stays out. A chunk
@@ -446,6 +431,7 @@ SEQLIB_TEST(wav, ReadLoops)
         return seqlib::ReadWav(
             Riff({{"fmt ", Format(1, 1, 8000, 1, 8)}, {"smpl", sampler}, {"data", std::vector<uint8_t>(16, 128)}}));
     };
+
     std::vector<uint8_t> short_header(32, 0);
     short_header[28] = 1;
     std::vector<uint8_t> short_loop = Sampler({});

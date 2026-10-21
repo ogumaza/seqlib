@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+// Text for SFZ files (see text.h).
+
 #include "seqlib/sfz/text.h"
 
 #include <iomanip>

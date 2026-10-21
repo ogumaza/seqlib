@@ -78,8 +78,10 @@ inline bool Check(bool ok, const std::string& what, std::source_location where =
     return ok;
 }
 
-// Returns the message of the exception that `f` throws, or "" if it throws none.
-template <typename F>
+// Returns the message of the exception of type E that `f` throws, or "" if it throws none. E is std::exception unless
+// the call names another type, such as ErrorOf<std::invalid_argument>(f). An exception of a type derived from E counts.
+// ErrorOf doesn't catch an exception of any other type. A test can then check the exception's type too.
+template <typename E = std::exception, typename F>
 std::string ErrorOf(F f)
 {
     std::string message;
@@ -87,7 +89,7 @@ std::string ErrorOf(F f)
     {
         f();
     }
-    catch (const std::exception& e)
+    catch (const E& e)
     {
         message = e.what();
     }

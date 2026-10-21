@@ -248,6 +248,7 @@ SEQLIB_TEST(midi_writer, TempoOnTheLoopsFirstTickFollowsItsMarkers)
 
         const midi::File file = midi::Read(midi::WriteMidi(perf, "Test", report));
 
+        SEQLIB_REQUIRE(!file.tracks.empty());
         const uint64_t scale = file.division / perf.timebase;
         std::vector<std::string> order;
         for (const midi::Event& e : file.tracks[0].events)

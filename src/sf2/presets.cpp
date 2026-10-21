@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 
+// A SoundFont's presets (see presets.h).
+
 #include "seqlib/sf2/presets.h"
 
-#include <algorithm>
-#include <cmath>
 #include <map>
+
+#include "seqlib/sf2/units.h"
 
 namespace seqlib::sf2
 {
@@ -59,10 +61,14 @@ Zone RegionZone(const ZoneValues& values)
 
     z.generators.push_back(Generator::Range(kKeyRange, values.keys.first, values.keys.second));
     z.generators.push_back(Generator::Range(kVelRange, values.velocities.first, values.velocities.second));
-    const int attenuation = std::clamp(static_cast<int>(std::lround(values.attenuation)), 0, 1440);
-    if (attenuation != 0)
+    const ZoneAttenuation attenuation = ToZoneAttenuation(values.attenuation);
+    if (attenuation.generator != 0)
     {
-        gen(kInitialAttenuation, attenuation);
+        gen(kInitialAttenuation, attenuation.generator);
+    }
+    if (attenuation.modulator)
+    {
+        z.modulators.push_back(*attenuation.modulator);
     }
     if (values.pan != 0)
     {

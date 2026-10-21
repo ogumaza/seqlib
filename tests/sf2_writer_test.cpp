@@ -3,7 +3,6 @@
 // Tests of the SoundFont writer, with the default options and with sorted presets without padding. Each synthetic
 // SoundFont's golden bytes are fixed: a change to them is a change of seqlib's output.
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -280,15 +279,7 @@ SEQLIB_TEST(sf2_writer, TooManyGeneratorsThrow)
     inst.zones[0].generators.assign(65536, G::Value(sf2::kPan, 0));
     sf.instruments = {inst};
 
-    std::string message;
-    try
-    {
-        sf2::Write(sf);
-    }
-    catch (const std::runtime_error& e)
-    {
-        message = e.what();
-    }
+    const std::string message = seqlib::testing::ErrorOf<std::runtime_error>([&] { sf2::Write(sf); });
 
     SEQLIB_CHECK(message == "SoundFont too large (more than 65535 generators, modulators or zones)");
 }
@@ -298,43 +289,51 @@ SEQLIB_TEST(sf2_writer, InfoIdWithoutFourCharactersThrows)
     sf2::SoundFont sf;
     sf.info = {{"NAME!", "five characters"}};
 
-    bool thrown = false;
-    try
-    {
-        sf2::Write(sf);
-    }
-    catch (const std::invalid_argument&)
-    {
-        thrown = true;
-    }
+    const std::string error = seqlib::testing::ErrorOf<std::invalid_argument>([&] { sf2::Write(sf); });
 
-    SEQLIB_CHECK(thrown);
+    SEQLIB_CHECK(!error.empty());
 }
 
 // The modulators that every global zone starts with. The writer stores each in the imod chunk as its source,
-// destination, amount, amount source and transform, 16 bits each. The terminal record follows them.
-SEQLIB_TEST(sf2_writer, NoVelocityFilterFullBend)
+// destination, amount, amount source and transform, 16 bits each. The terminal record follows them. The fourth
+// modulator is kCc10ToPan: source 0x028A, destination 17, amount 500, no amount source and a linear transform.
+SEQLIB_TEST(sf2_writer, GlobalZoneModulators)
 {
     sf2::SoundFont sf;
     sf.info = {{"INAM", "Modulators"}};
     sf2::Instrument instrument;
     instrument.name = "Global zone";
     instrument.zones.emplace_back();
-    instrument.zones[0].modulators.assign(sf2::kNoVelocityFilterFullBend.begin(), sf2::kNoVelocityFilterFullBend.end());
+    instrument.zones[0].modulators.assign(sf2::kGlobalZoneModulators.begin(), sf2::kGlobalZoneModulators.end());
     sf.instruments.push_back(instrument);
 
     const std::vector<uint8_t> file = sf2::Write(sf);
     const std::string text(file.begin(), file.end());
     const std::size_t imod = text.find("imod");
 
-    SEQLIB_CHECK(imod != std::string::npos && imod + 48 <= file.size());
+    SEQLIB_REQUIRE(imod != std::string::npos && imod + 58 <= file.size());
     const std::vector<uint8_t> chunk(file.begin() + static_cast<std::ptrdiff_t>(imod),
-                                     file.begin() + static_cast<std::ptrdiff_t>(std::min(imod + 48, file.size())));
-    SEQLIB_CHECK(chunk == FromHex("696d6f6428000000"
+                                     file.begin() + static_cast<std::ptrdiff_t>(imod + 58));
+    SEQLIB_CHECK(chunk == FromHex("696d6f6432000000"
                                   "02010800000000000000"
                                   "020108000000020c0000"
                                   "0e023400003210000000"
+                                  "8a021100f40100000000"
                                   "00000000000000000000"));
+    SEQLIB_CHECK(&sf2::kNoVelocityFilterFullBend == &sf2::kGlobalZoneModulators);
+}
+
+// SoundFont 2.04's default modulator from CC10 to pan (section 8.4.6): source 0x028A (CC10, linear, bipolar and
+// positive), destination 17 (pan), amount 1000, amount source 0 (No Controller) and transform 0 (linear). The section
+// lists Initial Attenuation as the destination. The section's title and text give the pan. kCc10ToPan matches every
+// field but the amount. Section 9.5.1 counts two modulators with the same source, destination, amount source and
+// transform as identical. In a global zone, kCc10ToPan then replaces the default modulator.
+SEQLIB_TEST(sf2_writer, Cc10ToPanIsTheDefaultModulatorAtHalfItsAmount)
+{
+    const sf2::Modulator& m = sf2::kCc10ToPan;
+
+    SEQLIB_CHECK(m.source == 0x028A && m.dest == 17 && m.amount_source == 0 && m.transform == 0);
+    SEQLIB_CHECK(m.amount == 500);
 }
 
 } // namespace

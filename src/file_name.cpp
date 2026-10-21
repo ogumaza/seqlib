@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+// File names that are valid on Windows, macOS and Linux (see file_name.h).
+
 #include "seqlib/file_name.h"
 
 #include <algorithm>

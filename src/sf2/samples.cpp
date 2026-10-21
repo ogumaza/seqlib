@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+// SoundFont samples from a prepared wave (see samples.h).
+
 #include "seqlib/sf2/samples.h"
 
 #include <algorithm>

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+// Reading SoundFont 2 files (see reader.h).
+
 #include "seqlib/sf2/reader.h"
 
 #include <algorithm>

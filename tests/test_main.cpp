@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+// The test runner: the tests' registry and main (see test.h).
+
 #include <cstdio>
 #include <string>
 #include <vector>

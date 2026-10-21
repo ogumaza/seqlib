@@ -85,16 +85,12 @@ SEQLIB_TEST(sf2_samples, MoreThan65535SamplesThrow)
 {
     sf2::SoundFont sf;
     sf.samples.resize(0xffff);
-    std::string error;
-
-    try
+    const auto add_one_more = [&]
     {
         sf2::AddSamples(sf, Wave(1, 4, false), "one too many", 32000, 60);
-    }
-    catch (const std::runtime_error& e)
-    {
-        error = e.what();
-    }
+    };
+
+    const std::string error = seqlib::testing::ErrorOf<std::runtime_error>(add_one_more);
 
     SEQLIB_CHECK(error == "more than 65535 samples");
 }

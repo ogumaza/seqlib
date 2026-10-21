@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+// Loop preparation for SoundFont 2 and SFZ samples (see loop.h).
+
 #include "seqlib/loop.h"
 
 #include <algorithm>
