@@ -10,6 +10,7 @@
 #include <iostream>
 #include <ostream>
 #include <source_location>
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -63,9 +64,9 @@ inline void Fail(const char* expression, const char* file, int line)
     FailWith(file, line, std::string("CHECK failed: ") + expression);
 }
 
-// Counts a check. If `ok` is false, it also reports and counts a failure that `what` describes, at `where`, as
-// FailWith does. `where` is the place of the call by default. This is for a check whose message has to say more than
-// its condition, such as which case failed. Returns `ok`. A test can then skip what depends on it.
+// Counts a check. If `ok` is false, it also reports and counts a failure that `what` describes, at `where`, as FailWith
+// does. `where` is the place of the call by default. This is for a check whose message has to say more than its
+// condition, such as which case failed. Returns `ok`. A test can then skip what depends on it.
 inline bool Check(bool ok, const std::string& what, std::source_location where = std::source_location::current())
 {
     checks++;
@@ -178,6 +179,83 @@ inline int Summary(const char* name)
     *success_stream << name << " tests passed\n" << std::flush;
 
     return 0;
+}
+
+// What the checks wrote while a function ran, and the checks and failures that it added (see Capture).
+struct Captured
+{
+    std::string text;
+    int checks = 0;
+    int failures = 0;
+};
+
+namespace detail
+{
+
+// Sets the state of the checks aside while it exists: the counts, the context, the test's name and the two streams. The
+// counts start at 0, the context and the test's name are empty, and both streams point at `out`. The destructor
+// restores the state. It does so when an exception ends the scope of the guard too.
+class StateGuard
+{
+public:
+    explicit StateGuard(std::ostream& out)
+        : checks_(std::exchange(checks, 0)),
+          failures_(std::exchange(failures, 0)),
+          context_(std::exchange(context, {})),
+          test_name_(std::exchange(test_name, {})),
+          failure_stream_(std::exchange(failure_stream, &out)),
+          success_stream_(std::exchange(success_stream, &out))
+    {
+    }
+
+    StateGuard(const StateGuard&) = delete;
+    StateGuard& operator=(const StateGuard&) = delete;
+
+    ~StateGuard()
+    {
+        checks = checks_;
+        failures = failures_;
+        context = std::move(context_);
+        test_name = std::move(test_name_);
+        failure_stream = failure_stream_;
+        success_stream = success_stream_;
+    }
+
+private:
+    int checks_;
+    int failures_;
+    std::string context_;
+    std::string test_name_;
+    std::ostream* failure_stream_;
+    std::ostream* success_stream_;
+};
+
+} // namespace detail
+
+// Runs `f` with the state of the checks set aside. Returns what the checks wrote while `f` ran, and the checks and
+// failures that `f` added. While `f` runs, the counts start at 0, the context and the test's name are empty, and both
+// streams write to a string. Afterwards Capture restores the counts, the context, the test's name and the streams. It
+// does so when `f` throws too. The exception then goes on to the caller.
+//
+// A test of the checks, or of a runner built on them, can call Capture. The failures inside `f` then don't count among
+// the failures of the test. A lambda can store a result in a local variable, such as the exit status of a runner:
+//
+//     int status = 0;
+//     const Captured run = Capture([&] { status = Summary("demo"); });
+template <typename F>
+Captured Capture(F f)
+{
+    std::ostringstream out;
+    const detail::StateGuard guard(out);
+
+    f();
+
+    Captured captured;
+    captured.text = out.str();
+    captured.checks = checks;
+    captured.failures = failures;
+
+    return captured;
 }
 
 } // namespace seqlib::testing

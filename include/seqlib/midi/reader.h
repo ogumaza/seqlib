@@ -50,6 +50,10 @@ struct File
 // are skipped, and so is anything after the last track.
 File Read(std::span<const uint8_t> data);
 
+// Returns the data of meta event `event`: the bytes after its type and its length. An event of fewer than three bytes
+// has no data.
+std::vector<uint8_t> MetaData(const Event& event);
+
 // A note: its track, channel and key, its note-on's velocity, and the ticks of its note-on and note-off. A note-on of
 // velocity 0 is a note-off.
 struct Note
@@ -96,6 +100,23 @@ struct Bend
 
 // Returns the pitch bends of every track, track by track.
 std::vector<Bend> Bends(const File& file);
+
+// The tempo of a file before its first tempo event, in microseconds per quarter note: 120 beats a minute.
+constexpr uint32_t kDefaultMicrosPerQuarter = 500000;
+
+// A tempo event: its track and tick, and its tempo in microseconds per quarter note.
+struct Tempo
+{
+    bool operator==(const Tempo&) const = default;
+
+    int track = 0;
+    uint64_t tick = 0;
+    uint32_t micros_per_quarter = 0;
+};
+
+// Returns the tempo events (FF 51) of every track, in order of tick. Events at the same tick keep the order of their
+// tracks. A tempo event whose data isn't three bytes is left out.
+std::vector<Tempo> Tempos(const File& file);
 
 // Returns the problems in the file `data`, one line each: malformed data (what Read throws), a header that isn't six
 // bytes, a chunk other than MTrk, data after the last track, running status, a data byte above 127, a track that

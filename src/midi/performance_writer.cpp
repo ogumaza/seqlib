@@ -13,6 +13,9 @@
 #include <optional>
 #include <utility>
 
+#include "midi/rpn.h"
+#include "midi/track_name.h"
+#include "midi/values.h"
 #include "seqlib/midi/controllers.h"
 #include "seqlib/midi/encoder.h"
 
@@ -21,11 +24,22 @@ namespace seqlib::midi
 namespace
 {
 
-// General MIDI drum channel (channel 10).
-constexpr int kDrumChannel = 9;
+using detail::kMaxDataByte;
+using detail::kPitchWheelCentre;
+using detail::kPitchWheelMax;
+
+// The number of channels in a MIDI file.
+constexpr int kChannels = 16;
 
 // The order in which tracks get MIDI channels. The drum channel comes last.
-constexpr int kChannelOrder[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, kDrumChannel};
+constexpr int kChannelOrder[kChannels] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, kDrumChannel};
+
+// AssignChannels gives every track a channel before it gives any track a second one.
+static_assert(kTracks <= kChannels, "each track requires a channel");
+
+// The velocity of the note-offs that the writer sends. The MIDI specification gives 64 for a note-off without a release
+// velocity.
+constexpr uint8_t kNoteOffVelocity = 64;
 
 // Minimum MIDI ticks per quarter note. Events are rounded to the nearest MIDI tick at the start of a player's frame
 // (see EventTick). At 120 BPM the error is at most 1/30 ms, about one sample at 32 kHz. This preserves the phase
@@ -68,7 +82,8 @@ uint64_t EventTick(const Performance& perf, FrameTiming timing, uint32_t tick, d
     }
     else if (tick < perf.frame_ticks.size())
     {
-        const uint64_t frame_tick = static_cast<uint64_t>(std::llround(perf.frame_ticks[tick] * scale));
+        const uint64_t frame_tick =
+            static_cast<uint64_t>(std::llround(perf.frame_ticks[tick] * static_cast<double>(scale)));
         midi_tick = timing == FrameTiming::kFrameStart ? frame_tick : std::min(midi_tick, frame_tick);
     }
 
@@ -128,7 +143,7 @@ std::vector<bool> PartsThatPlay(const Performance& perf, int t)
 std::vector<uint32_t> LayerDemand(const std::vector<TrackEvent>& events, uint8_t part)
 {
     std::vector<uint32_t> demand;
-    std::array<std::vector<uint32_t>, 128> held{}; // per key: note id per layer, 0: free
+    std::array<std::vector<uint32_t>, kKeys> held{}; // per key: note id per layer, 0: free
     std::map<uint32_t, std::pair<uint8_t, std::size_t>> where;
     for (const TrackEvent& e : events)
     {
@@ -177,11 +192,11 @@ std::vector<uint32_t> LayerDemand(const std::vector<TrackEvent>& events, uint8_t
 // Gives the first part of each active track one MIDI channel, then each of its other parts with notes, track by track.
 // Stops when the channels run out. Allocates remaining channels one at a time to the part whose next layer would save
 // the most notes from being cut short.
-std::array<PartChannels, 16> AssignChannels(const Performance& perf)
+std::array<PartChannels, kTracks> AssignChannels(const Performance& perf)
 {
-    std::array<std::vector<std::vector<uint32_t>>, 16> demand; // per track, per part
-    std::array<PartChannels, 16> channels;
-    for (int t = 0; t < 16; t++)
+    std::array<std::vector<std::vector<uint32_t>>, kTracks> demand; // per track, per part
+    std::array<PartChannels, kTracks> channels;
+    for (int t = 0; t < kTracks; t++)
     {
         demand[t].resize(PartCount(perf, t));
         channels[t].resize(demand[t].size());
@@ -192,21 +207,21 @@ std::array<PartChannels, 16> AssignChannels(const Performance& perf)
     }
 
     int next = 0;
-    for (int t = 0; t < 16; t++)
+    auto plays = [](const std::vector<uint32_t>& d)
     {
-        auto plays = [](const std::vector<uint32_t>& d)
-        {
-            return !d.empty();
-        };
+        return !d.empty();
+    };
+    for (int t = 0; t < kTracks; t++)
+    {
         if (std::ranges::any_of(demand[t], plays))
         {
             channels[t][0].push_back(kChannelOrder[next++]);
         }
     }
 
-    for (int t = 0; t < 16; t++)
+    for (int t = 0; t < kTracks; t++)
     {
-        for (std::size_t p = 1; p < demand[t].size() && next < 16; p++)
+        for (std::size_t p = 1; p < demand[t].size() && next < kChannels; p++)
         {
             if (!demand[t][p].empty())
             {
@@ -215,12 +230,12 @@ std::array<PartChannels, 16> AssignChannels(const Performance& perf)
         }
     }
 
-    while (next < 16)
+    while (next < kChannels)
     {
         int best = -1;
         std::size_t best_part = 0;
         uint32_t best_demand = 0;
-        for (int t = 0; t < 16; t++)
+        for (int t = 0; t < kTracks; t++)
         {
             for (std::size_t p = 0; p < demand[t].size(); p++)
             {
@@ -247,11 +262,11 @@ std::array<PartChannels, 16> AssignChannels(const Performance& perf)
 // Writes the conductor track: title, tempo and loop markers. CC111 marks loop start for RPG Maker players; "loopStart"
 // and "loopEnd" serve other players.
 TrackEncoder ConductorTrack(const Performance& perf, const std::string& title,
-                            const std::array<PartChannels, 16>& channels)
+                            const std::array<PartChannels, kTracks>& channels)
 {
     const uint64_t scale = TickScale(perf);
     TrackEncoder conductor;
-    conductor.Meta(0, 0x03, title);
+    conductor.Meta(0, meta::kTrackName, title);
 
     int first_channel = -1;
     for (const PartChannels& c : channels)
@@ -277,10 +292,10 @@ TrackEncoder ConductorTrack(const Performance& perf, const std::string& title,
     {
         const uint64_t start = perf.loop->start;
         tempo_before(start);
-        conductor.Meta(start * scale, 0x06, "loopStart");
+        conductor.Meta(start * scale, meta::kMarker, "loopStart");
         if (first_channel >= 0)
         {
-            conductor.Event(start * scale, {static_cast<uint8_t>(0xb0 | first_channel), cc::kLoopStart, 0});
+            conductor.Event(start * scale, {static_cast<uint8_t>(status::kControl | first_channel), cc::kLoopStart, 0});
         }
 
         // A player that loops goes back to the event after the marker, or after CC111. A tempo change on the loop's
@@ -288,7 +303,7 @@ TrackEncoder ConductorTrack(const Performance& perf, const std::string& title,
         tempo_before(start + 1);
 
         tempo_before(uint64_t{perf.loop->end} + 1);
-        conductor.Meta(perf.loop->end * scale, 0x06, "loopEnd");
+        conductor.Meta(perf.loop->end * scale, meta::kMarker, "loopEnd");
     }
 
     tempo_before(UINT64_MAX);
@@ -302,12 +317,16 @@ TrackEncoder ConductorTrack(const Performance& perf, const std::string& title,
 // requires more. The parts in `plays` that play no note don't count (PartsThatPlay).
 int BendRange(const Performance& perf, int t, const std::vector<bool>& plays, MidiReport& report)
 {
+    // The steps of the wheel below and above its centre.
+    constexpr double kDownward = kPitchWheelCentre;
+    constexpr double kUpward = kPitchWheelMax - kPitchWheelCentre;
+
     double needed = 0.0;
     for (const TrackEvent& e : perf.tracks[t])
     {
         if (e.kind == EventKind::kPitch && plays[e.part])
         {
-            needed = std::max(needed, e.semitones > 0.0f ? e.semitones * 8192.0 / 8191.0 : -e.semitones);
+            needed = std::max(needed, e.semitones > 0.0f ? e.semitones * kDownward / kUpward : -e.semitones);
         }
     }
 
@@ -316,11 +335,11 @@ int BendRange(const Performance& perf, int t, const std::vector<bool>& plays, Mi
     {
         range = static_cast<int>(std::ceil(needed - 1e-4));
     }
-    if (range > 127)
+    if (range > kMaxDataByte)
     {
         report.warnings.push_back("track " + std::to_string(t) + " bends up to " + std::to_string(range) +
                                   " semitones; MIDI allows 127");
-        range = 127;
+        range = kMaxDataByte;
     }
 
     return range;
@@ -352,8 +371,8 @@ std::optional<uint8_t> ControllerFor(EventKind kind)
 // The layer among `mine` for a note-on of `key`: the first whose key is free, or else the one whose note of the key
 // started first. `sounding` holds each layer's note on each key, 0 for a free key. `since` holds the tick that it
 // started at.
-std::size_t LayerForNote(const std::vector<std::size_t>& mine, const std::vector<std::array<uint32_t, 128>>& sounding,
-                         const std::vector<std::array<uint32_t, 128>>& since, uint8_t key)
+std::size_t LayerForNote(const std::vector<std::size_t>& mine, const std::vector<std::array<uint32_t, kKeys>>& sounding,
+                         const std::vector<std::array<uint32_t, kKeys>>& since, uint8_t key)
 {
     const auto free = std::ranges::find_if(mine, [&](std::size_t l) { return sounding[l][key] == 0; });
     if (free != mine.end())
@@ -381,6 +400,7 @@ std::size_t LayerForNote(const std::vector<std::size_t>& mine, const std::vector
 std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions& options, int t,
                                       const PartChannels& parts, MidiReport& report)
 {
+    const std::string name = detail::TrackName(perf, t);
     std::vector<TrackEncoder> layers;
     std::vector<int> channels;
     std::vector<std::vector<std::size_t>> part_layers(parts.size());
@@ -390,10 +410,7 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
         {
             const std::size_t l = layers.size();
             layers.emplace_back();
-            const std::string& name = perf.track_names[static_cast<std::size_t>(t)];
-            layers.back().Meta(0, 0x03,
-                               (name.empty() ? "Track " + std::to_string(t) : name) +
-                                   (l ? " (layer " + std::to_string(l + 1) + ")" : ""));
+            layers.back().Meta(0, meta::kTrackName, name + (l ? " (layer " + std::to_string(l + 1) + ")" : ""));
             channels.push_back(channel);
             part_layers[p].push_back(l);
         }
@@ -426,16 +443,14 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
     {
         every[l] = l;
     }
-    send(0, every, {0xb0, cc::kRpnMsb, 0});
-    send(0, every, {0xb0, cc::kRpnLsb, 0});
-    send(0, every, {0xb0, cc::kDataEntry, static_cast<uint8_t>(range)});
-    send(0, every, {0xb0, cc::kDataEntryLsb, 0});
-    send(0, every, {0xb0, cc::kRpnMsb, 127});
-    send(0, every, {0xb0, cc::kRpnLsb, 127});
+    for (const auto& [controller, value] : detail::BendRangeControllers(static_cast<uint8_t>(range)))
+    {
+        send(0, every, {status::kControl, controller, value});
+    }
 
-    std::vector<std::array<uint32_t, 128>> sounding(layers.size()); // note id per key, 0: free
-    std::vector<std::array<uint32_t, 128>> since(layers.size());    // that note's start time
-    std::map<uint32_t, std::size_t> layer_of;                       // note id -> layer
+    std::vector<std::array<uint32_t, kKeys>> sounding(layers.size()); // note id per key, 0: free
+    std::vector<std::array<uint32_t, kKeys>> since(layers.size());    // that note's start time
+    std::map<uint32_t, std::size_t> layer_of;                         // note id -> layer
     for (const TrackEvent& e : perf.tracks[t])
     {
         if (!plays[e.part])
@@ -454,7 +469,7 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
                 const std::size_t l = LayerForNote(mine, sounding, since, key);
                 if (sounding[l][key] != 0)
                 {
-                    layers[l].Event(at, {static_cast<uint8_t>(0x80 | channels[l]), key, 64});
+                    layers[l].Event(at, {static_cast<uint8_t>(status::kNoteOff | channels[l]), key, kNoteOffVelocity});
                     layer_of.erase(sounding[l][key]);
                     report.cut_notes++;
                 }
@@ -462,7 +477,7 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
                 sounding[l][key] = e.note;
                 since[l][key] = e.tick;
                 layer_of[e.note] = l;
-                layers[l].Event(at, {static_cast<uint8_t>(0x90 | channels[l]), key, e.value});
+                layers[l].Event(at, {static_cast<uint8_t>(status::kNoteOn | channels[l]), key, e.value});
                 break;
             }
 
@@ -477,15 +492,15 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
                 const std::size_t l = it->second;
                 layer_of.erase(it);
                 sounding[l][key] = 0;
-                layers[l].Event(at, {static_cast<uint8_t>(0x80 | channels[l]), key, 64});
+                layers[l].Event(at, {static_cast<uint8_t>(status::kNoteOff | channels[l]), key, kNoteOffVelocity});
                 break;
             }
 
         case EventKind::kPreset:
             {
-                send(at, mine, {0xb0, cc::kBankSelect, static_cast<uint8_t>((e.preset >> 7) & 0x7f)});
-                send(at, mine, {0xb0, cc::kBankSelectLsb, 0});
-                send(at, mine, {0xc0, static_cast<uint8_t>(e.preset & 0x7f)});
+                send(at, mine, {status::kControl, cc::kBankSelect, static_cast<uint8_t>((e.preset >> 7) & 0x7f)});
+                send(at, mine, {status::kControl, cc::kBankSelectLsb, 0});
+                send(at, mine, {status::kProgram, static_cast<uint8_t>(e.preset & 0x7f)});
 
                 // Synths play bank 128 on the drum channel. sf2::AddChannel10Copy copies the preset there.
                 const auto on_drums = [&channels](std::size_t l)
@@ -500,20 +515,22 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
             }
 
         case EventKind::kSoundOff:
-            send(at, mine, {0xb0, cc::kAllSoundOff, 0});
+            send(at, mine, {status::kControl, cc::kAllSoundOff, 0});
             break;
 
         case EventKind::kPitch:
             {
-                const int64_t v = std::clamp<int64_t>(8192 + std::llround(e.semitones / range * 8192.0), 0, 16383);
-                send(at, mine, {0xe0, static_cast<uint8_t>(v & 0x7f), static_cast<uint8_t>(v >> 7)});
+                const int64_t v = std::clamp<int64_t>(
+                    kPitchWheelCentre + std::llround(e.semitones / range * double{kPitchWheelCentre}), 0,
+                    kPitchWheelMax);
+                send(at, mine, {status::kPitchBend, static_cast<uint8_t>(v & 0x7f), static_cast<uint8_t>(v >> 7)});
                 break;
             }
 
         default:
             if (const std::optional<uint8_t> controller = ControllerFor(e.kind))
             {
-                send(at, mine, {0xb0, *controller, e.value});
+                send(at, mine, {status::kControl, *controller, e.value});
             }
             break;
         }
@@ -532,7 +549,7 @@ std::vector<TrackEncoder> TrackLayers(const Performance& perf, const MidiOptions
 std::vector<uint8_t> WriteMidi(const Performance& perf, const std::string& title, MidiReport& report,
                                const MidiOptions& options)
 {
-    const std::array<PartChannels, 16> channels = AssignChannels(perf);
+    const std::array<PartChannels, kTracks> channels = AssignChannels(perf);
     report.channels = 0;
     for (const PartChannels& parts : channels)
     {
@@ -544,7 +561,7 @@ std::vector<uint8_t> WriteMidi(const Performance& perf, const std::string& title
 
     std::vector<TrackEncoder> tracks;
     tracks.push_back(ConductorTrack(perf, title, channels));
-    for (int t = 0; t < 16; t++)
+    for (int t = 0; t < kTracks; t++)
     {
         if (channels[t][0].empty())
         {

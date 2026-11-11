@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -58,6 +59,13 @@ struct ZoneValues
 // envelope, the root key, the tuning, the sample mode, the exclusive class and the sample. An attenuation that the
 // generator can't hold also gives the zone a modulator (ToZoneAttenuation).
 Zone RegionZone(const ZoneValues& values);
+
+// Adds `generators` to `zone` in their order, before the zone's last generator. SoundFont requires a zone's sample
+// generator, or a preset zone's instrument generator, to come last. A zone without generators gets them at its end.
+void AddGenerators(Zone& zone, std::span<const Generator> generators);
+
+// Adds generator `oper` with the signed amount `value` to `zone`, as AddGenerators does.
+void AddGenerator(Zone& zone, uint16_t oper, int value);
 
 // Adds `instrument` to `sf`, and a preset named `name` that plays it, at bank index / 128 and program index % 128.
 void AddInstrumentPreset(SoundFont& sf, uint32_t index, const std::string& name, Instrument instrument);

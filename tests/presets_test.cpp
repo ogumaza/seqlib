@@ -6,10 +6,12 @@
 #include "seqlib/sf2/presets.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "helpers.h"
 #include "test.h"
 
 namespace
@@ -17,18 +19,8 @@ namespace
 
 namespace sf2 = seqlib::sf2;
 
+using seqlib::test::PresetOf;
 using Names = std::vector<std::string>;
-
-sf2::Preset NewPreset(const std::string& name, uint16_t bank, uint16_t program)
-{
-    sf2::Preset p;
-    p.name = name;
-    p.bank = bank;
-    p.program = program;
-    p.zones.push_back(sf2::Zone{{sf2::Generator::Value(sf2::kInstrument, 0)}, {}});
-
-    return p;
-}
 
 SEQLIB_TEST(presets, NamesWithoutBank)
 {
@@ -52,7 +44,7 @@ SEQLIB_TEST(presets, NamesNumberRepeats)
 SEQLIB_TEST(presets, Channel10Copy)
 {
     sf2::SoundFont sf;
-    sf.presets = {NewPreset("b0 p5", 0, 5), NewPreset("b0 p6", 0, 6)};
+    sf.presets = {PresetOf("b0 p5", 0, 5, 0), PresetOf("b0 p6", 0, 6, 0)};
     std::vector<std::string> warnings;
 
     sf2::AddChannel10Copy(sf, 1, warnings);
@@ -66,7 +58,7 @@ SEQLIB_TEST(presets, Channel10Copy)
 SEQLIB_TEST(presets, Channel10CopyWarnsOfATakenProgram)
 {
     sf2::SoundFont sf;
-    sf.presets = {NewPreset("b0 p5", 0, 5), NewPreset("drums", sf2::kChannel10Bank, 5)};
+    sf.presets = {PresetOf("b0 p5", 0, 5, 0), PresetOf("drums", sf2::kChannel10Bank, 5, 0)};
     std::vector<std::string> warnings;
 
     sf2::AddChannel10Copy(sf, 0, warnings);
@@ -141,16 +133,30 @@ SEQLIB_TEST(presets, RegionZoneScalesTheAttenuation)
         values.attenuation = centibels;
         return sf2::RegionZone(values);
     };
-    auto generator = [](const sf2::Zone& z)
+    // The value of the zone's initialAttenuation generator, or none if the zone has none.
+    auto generator = [](const sf2::Zone& z) -> std::optional<uint16_t>
     {
-        const std::vector<std::pair<uint16_t, uint16_t>> generators = Generators(z);
-        return generators.size() > 2 && generators[2].first == 48 ? generators[2].second : 0;
+        for (const auto& [oper, amount] : Generators(z))
+        {
+            if (oper == sf2::kInitialAttenuation)
+            {
+                return amount;
+            }
+        }
+
+        return std::nullopt;
     };
     auto modulator = [](const sf2::Zone& z)
     {
-        const bool attenuates = z.modulators.size() == 1 && z.modulators[0].source == 0 && z.modulators[0].dest == 48 &&
-                                z.modulators[0].amount_source == 0 && z.modulators[0].transform == 0;
-        return attenuates ? z.modulators[0].amount : 0;
+        if (z.modulators.size() != 1)
+        {
+            return 0;
+        }
+
+        const sf2::Modulator& m = z.modulators[0];
+        const bool attenuates = m.source == sf2::kNoController && m.dest == sf2::kInitialAttenuation &&
+                                m.amount_source == sf2::kNoController && m.transform == sf2::kLinear;
+        return attenuates ? static_cast<int>(m.amount) : 0;
     };
 
     const sf2::Zone quiet = zone(200.0);
@@ -163,7 +169,36 @@ SEQLIB_TEST(presets, RegionZoneScalesTheAttenuation)
     SEQLIB_CHECK(generator(quieter) == 1440 && modulator(quieter) == 124);
     SEQLIB_CHECK(generator(silent) == 1440 && modulator(silent) == 864);
     SEQLIB_CHECK(generator(rounded) == 6 && rounded.modulators.empty());
-    SEQLIB_CHECK(generator(none) == 0 && none.modulators.empty());
+    SEQLIB_CHECK(!generator(none) && none.modulators.empty());
+}
+
+// A generator added to a zone goes before the sample's, which stays last. Several go in their order.
+SEQLIB_TEST(presets, AddGeneratorKeepsTheSampleLast)
+{
+    sf2::ZoneValues values;
+    values.sample = 4;
+    sf2::Zone zone = sf2::RegionZone(values);
+    const std::vector<sf2::Generator> kTuning = {sf2::Generator::Value(sf2::kFineTune, -7),
+                                                 sf2::Generator::Value(sf2::kScaleTuning, 0)};
+
+    sf2::AddGenerator(zone, sf2::kInitialFilterFc, 9000);
+    sf2::AddGenerators(zone, kTuning);
+
+    const std::vector<std::pair<uint16_t, uint16_t>> kExpected = {
+        {43, 32512}, {44, 32512}, {34, 53536}, {35, 53536}, {36, 53536}, {37, 0},
+        {38, 53536}, {58, 60},    {8, 9000},   {52, 65529}, {56, 0},     {53, 4},
+    };
+    SEQLIB_CHECK(Generators(zone) == kExpected);
+}
+
+// A zone without generators gets the generator at its end.
+SEQLIB_TEST(presets, AddGeneratorToAnEmptyZone)
+{
+    sf2::Zone zone;
+
+    sf2::AddGenerator(zone, sf2::kPan, -500);
+
+    SEQLIB_CHECK(Generators(zone) == (std::vector<std::pair<uint16_t, uint16_t>>{{sf2::kPan, 65036}}));
 }
 
 SEQLIB_TEST(presets, AddInstrumentPreset)
@@ -175,11 +210,14 @@ SEQLIB_TEST(presets, AddInstrumentPreset)
 
     sf2::AddInstrumentPreset(sf, 130, "b1 p2", instrument);
 
-    SEQLIB_CHECK(sf.instruments.size() == 2 && sf.instruments[1].name == "b1 p2");
-    SEQLIB_CHECK(sf.presets.size() == 1 && sf.presets[0].name == "b1 p2");
-    SEQLIB_CHECK(sf.presets.size() == 1 && sf.presets[0].bank == 1 && sf.presets[0].program == 2);
-    SEQLIB_CHECK(sf.presets.size() == 1 && sf.presets[0].zones.size() == 1 &&
-                 Generators(sf.presets[0].zones[0]) == (std::vector<std::pair<uint16_t, uint16_t>>{{41, 1}}));
+    SEQLIB_REQUIRE_EQ(sf.instruments.size(), 2);
+    SEQLIB_REQUIRE_EQ(sf.presets.size(), 1);
+    SEQLIB_CHECK(sf.instruments[1].name == "b1 p2");
+    SEQLIB_CHECK(sf.presets[0].name == "b1 p2");
+    SEQLIB_CHECK(sf.presets[0].bank == 1 && sf.presets[0].program == 2);
+    SEQLIB_REQUIRE_EQ(sf.presets[0].zones.size(), 1);
+    SEQLIB_CHECK(Generators(sf.presets[0].zones[0]) ==
+                 (std::vector<std::pair<uint16_t, uint16_t>>{{sf2::kInstrument, 1}}));
 }
 
 } // namespace

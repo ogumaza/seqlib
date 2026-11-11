@@ -63,11 +63,13 @@ SEQLIB_TEST(sf2_samples, StereoWaveLinksItsPair)
     sf2::SoundFont sf;
     sf.samples.resize(2);
 
+    // A third channel is left out.
     const std::vector<uint16_t> ids = sf2::AddSamples(sf, Wave(3, 64, true), "pair", 44100, 64);
 
     SEQLIB_REQUIRE(ids == (std::vector<uint16_t>{2, 3}) && sf.samples.size() == 4);
     const sf2::Sample& left = sf.samples[2];
     const sf2::Sample& right = sf.samples[3];
+    SEQLIB_REQUIRE(!left.data.empty() && !right.data.empty());
     SEQLIB_CHECK(left.name == "pairL" && left.type == sf2::kLeft && left.link == 3 && left.data[0] == 1);
     SEQLIB_CHECK(right.name == "pairR" && right.type == sf2::kRight && right.link == 2 && right.data[0] == 2);
     SEQLIB_CHECK(left.loop_start == 8 && left.loop_end == 40 && right.loop_start == 8 && right.loop_end == 40);

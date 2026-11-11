@@ -14,6 +14,15 @@
 namespace seqlib::sf2
 {
 
+// The sizes of the pdta chunks' records: a preset header (phdr), a bag (pbag and ibag), a modulator (pmod and imod), a
+// generator (pgen and igen), an instrument header (inst) and a sample header (shdr).
+constexpr std::size_t kPresetHeaderSize = 38;
+constexpr std::size_t kBagSize = 4;
+constexpr std::size_t kModulatorSize = 10;
+constexpr std::size_t kGeneratorSize = 4;
+constexpr std::size_t kInstrumentHeaderSize = 22;
+constexpr std::size_t kSampleHeaderSize = 46;
+
 // A SoundFont's chunks: the sub-chunks of its INFO, sdta and pdta lists, by ID, such as "INAM", "smpl" or "shdr".
 struct Records
 {

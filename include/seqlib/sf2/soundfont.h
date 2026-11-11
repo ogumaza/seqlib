@@ -172,7 +172,8 @@ inline constexpr std::array<Modulator, 4> kGlobalZoneModulators = {{
 
 // kGlobalZoneModulators under the name that it had before it held kCc10ToPan. The name misleads: the set holds a pan
 // modulator too. Callers move to kGlobalZoneModulators. This name goes once none uses it.
-inline constexpr const std::array<Modulator, 4>& kNoVelocityFilterFullBend = kGlobalZoneModulators;
+[[deprecated("use kGlobalZoneModulators")]] inline constexpr const std::array<Modulator, 4>& kNoVelocityFilterFullBend =
+    kGlobalZoneModulators;
 
 struct Zone
 {

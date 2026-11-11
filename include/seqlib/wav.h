@@ -36,6 +36,7 @@ struct WavContents
     bool loop_forward = true; // the first loop plays forward
     bool loop_endless = true; // the first loop repeats without end
     std::size_t dropped = 0;  // the bytes at the data chunk's end that hold no whole frame
+    std::size_t inexact = 0;  // the samples whose 16-bit value isn't the file's value: rounded, clamped or NaN
 };
 
 // Reads a WAV file: WAVE_FORMAT_PCM with 1 to 32 bits per sample, WAVE_FORMAT_IEEE_FLOAT with 32 or 64, or

@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "seqlib/midi/controllers.h"
+#include "seqlib/midi/encoder.h"
 
 namespace seqlib::midi
 {
@@ -33,10 +34,13 @@ public:
 
     void Name(const std::string& text)
     {
-        Meta(0, 0x03, text);
+        Meta(0, meta::kTrackName, text);
     }
 
+    // A tempo change of `micros_per_quarter` microseconds per quarter note. A tempo event can store at most 0xFFFFFF
+    // microseconds per quarter note, about 3.6 quarter notes a minute. A slower tempo is written as 0xFFFFFF.
     void Tempo(uint32_t tick, uint32_t micros_per_quarter);
+
     void TimeSignature(uint32_t tick, int numerator, int denominator_pow2);
 
     // Adds a tempo change at `tick` to the tempo that the track's tempo changes give there, if the track has any. The
@@ -84,7 +88,8 @@ public:
 
     // Moves each event, and the track's end, to the tick that `place` returns for the event's tick. `place` mustn't put
     // any two ticks out of order. A note whose note-on and note-off then fall on the same tick would no longer play.
-    // The note is left out.
+    // The note is left out. Retime pairs each note-off with the latest note-on of its key and channel that was added
+    // before it. Add a note's note-off before the next note-on of the same key and channel.
     void Retime(const std::function<uint32_t(uint32_t)>& place);
 
     // Returns the track's events as the data of an MTrk chunk.

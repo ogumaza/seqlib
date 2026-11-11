@@ -154,8 +154,8 @@ public:
 
     // The parts that each MIDI track may use (16 by default), and those that it has used: one more than the highest
     // part that a switch or a note has gone to.
-    void SetPartLimits(const std::array<uint8_t, 16>& limits);
-    const std::array<uint8_t, 16>& PartsUsed() const;
+    void SetPartLimits(const std::array<uint8_t, kTracks>& limits);
+    const std::array<uint8_t, kTracks>& PartsUsed() const;
 
     // The part switches, in the order they were made.
     const std::vector<PartSwitch>& PartSwitches() const;
@@ -178,6 +178,17 @@ public:
     const std::vector<std::string>& Warnings() const;
 
 private:
+    // The parts that each MIDI track may use until SetPartLimits() sets them.
+    static constexpr uint8_t kDefaultPartLimit = 16;
+
+    static constexpr std::array<uint8_t, kTracks> DefaultPartLimits()
+    {
+        std::array<uint8_t, kTracks> limits{};
+        limits.fill(kDefaultPartLimit);
+
+        return limits;
+    }
+
     void SwitchTo(Performance& perf, TrackOutput& output, uint32_t tick, uint8_t part);
 
     // Counts part `part` among the parts that MIDI track `midi_track` has used (PartsUsed()).
@@ -186,8 +197,8 @@ private:
     RecorderOptions options_;
     uint32_t next_note_ = 1;
     std::vector<PartSwitch> part_switches_;
-    std::array<uint8_t, 16> part_limits_ = {16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16};
-    std::array<uint8_t, 16> parts_used_{};
+    std::array<uint8_t, kTracks> part_limits_ = DefaultPartLimits();
+    std::array<uint8_t, kTracks> parts_used_{};
     double level_scale_ = 1.0;
     double level_peak_ = 0.0;
     std::map<std::string, uint32_t> approximations_;

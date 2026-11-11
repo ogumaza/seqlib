@@ -9,6 +9,7 @@
 #include <limits>
 #include <string>
 
+#include "helpers.h"
 #include "test.h"
 
 namespace
@@ -164,16 +165,23 @@ constexpr UnlimitedTimecentsCase kUnlimitedTimecents[] = {
     {16742.706298828125, 4879},  {68561.382293701172, 7319}, {1097233.2572937012, 12120}, {16742706.298828125, 16837},
 };
 
-// LFO frequencies by SoundFont 2.01, sections 8.1.2 and 8.1.3: 8.176 Hz is 0 cents, an octave is 1200 cents, 10 mHz is
-// -11610 cents, and the generators run from -16000 to 4500 cents.
-struct LfoCase
+// A frequency in hertz and the cents that it converts to.
+struct HertzCase
 {
     double hz;
     int expected;
 };
 
-constexpr LfoCase kLfoFrequencies[] = {
+// LFO frequencies by SoundFont 2.01, sections 8.1.2 and 8.1.3: 8.176 Hz is 0 cents, an octave is 1200 cents, 10 mHz is
+// -11610 cents, and the generators run from -16000 to 4500 cents.
+constexpr HertzCase kLfoFrequencies[] = {
     {8.176, 0}, {16.352, 1200}, {4.088, -1200}, {0.01, -11610}, {1000.0, 4500}, {0.0001, -16000},
+};
+
+// Absolute cents, 1200 log2(hz / 8.176), with no limits. 440 Hz is 6900 cents: MIDI key 69. 1000 Hz, 20 kHz and 0.1
+// mHz are outside the range of the LFO generators.
+constexpr HertzCase kAbsoluteCents[] = {
+    {8.176, 0}, {16.352, 1200}, {440.0, 6900}, {1000.0, 8321}, {20000.0, 13508}, {0.0001, -19583},
 };
 
 // Attenuations in the form that zones hold them. SoundFont 2.04 gives initialAttenuation, generator 48, a range of 0 to
@@ -219,8 +227,9 @@ SEQLIB_TEST(units, ToTimecentsWithLimits)
 {
     for (const TimecentsCase& c : kTimecents)
     {
-        seqlib::test::SetContext("ms " + std::to_string(c.ms));
-        SEQLIB_CHECK(seqlib::sf2::ToTimecents(c.ms, c.lo, c.hi) == c.expected);
+        seqlib::testing::SetContext("ms " + seqlib::test::HexFloat(c.ms) + ", " + std::to_string(c.lo) + " to " +
+                                    std::to_string(c.hi));
+        SEQLIB_CHECK_EQ(seqlib::sf2::ToTimecents(c.ms, c.lo, c.hi), c.expected);
     }
 }
 
@@ -228,17 +237,38 @@ SEQLIB_TEST(units, ToTimecentsWithNoLimits)
 {
     for (const UnlimitedTimecentsCase& c : kUnlimitedTimecents)
     {
-        seqlib::test::SetContext("ms " + std::to_string(c.ms));
-        SEQLIB_CHECK(seqlib::sf2::ToTimecents(c.ms) == c.expected);
+        seqlib::testing::SetContext("ms " + std::to_string(c.ms));
+        SEQLIB_CHECK_EQ(seqlib::sf2::ToTimecents(c.ms), c.expected);
     }
+}
+
+// An amount rounds to the nearest, halves away from zero, and stops at the limits of a signed 16-bit number.
+SEQLIB_TEST(units, Amounts)
+{
+    SEQLIB_CHECK_EQ(seqlib::sf2::ToAmount(0.0), 0);
+    SEQLIB_CHECK_EQ(seqlib::sf2::ToAmount(-123.4), -123);
+    SEQLIB_CHECK_EQ(seqlib::sf2::ToAmount(2.5), 3);
+    SEQLIB_CHECK_EQ(seqlib::sf2::ToAmount(-2.5), -3);
+    SEQLIB_CHECK_EQ(seqlib::sf2::ToAmount(32767.4), 32767);
+    SEQLIB_CHECK_EQ(seqlib::sf2::ToAmount(40000.0), 32767);
+    SEQLIB_CHECK_EQ(seqlib::sf2::ToAmount(-1.0e9), -32768);
 }
 
 SEQLIB_TEST(units, LfoFrequencies)
 {
-    for (const LfoCase& c : kLfoFrequencies)
+    for (const HertzCase& c : kLfoFrequencies)
     {
-        seqlib::test::SetContext("hz " + std::to_string(c.hz));
-        SEQLIB_CHECK(seqlib::sf2::LfoFrequency(c.hz) == c.expected);
+        seqlib::testing::SetContext("hz " + std::to_string(c.hz));
+        SEQLIB_CHECK_EQ(seqlib::sf2::LfoFrequency(c.hz), c.expected);
+    }
+}
+
+SEQLIB_TEST(units, AbsoluteCentsHaveNoLimits)
+{
+    for (const HertzCase& c : kAbsoluteCents)
+    {
+        seqlib::testing::SetContext("hz " + std::to_string(c.hz));
+        SEQLIB_CHECK_EQ(seqlib::sf2::AbsoluteCents(c.hz), c.expected);
     }
 }
 
@@ -246,7 +276,7 @@ SEQLIB_TEST(units, SoundFontPans)
 {
     for (const PanCase& c : kPans)
     {
-        seqlib::test::SetContext("pan " + std::to_string(c.pan));
+        seqlib::testing::SetContext("pan " + std::to_string(c.pan));
         SEQLIB_CHECK(std::abs(seqlib::sf2::SoundFontPan(c.pan) - c.expected) <= kPanTolerance);
     }
 }
@@ -257,7 +287,7 @@ SEQLIB_TEST(units, RoundedPans)
     {
         const double pan = seqlib::sf2::SoundFontPan((k - 64) / 63.0);
         const RoundedPan& expected = kRoundedPans[k];
-        seqlib::test::SetContext("k " + std::to_string(k));
+        seqlib::testing::SetContext("k " + std::to_string(k));
         SEQLIB_CHECK(std::lround(pan * 500.0) == expected.generator);
         SEQLIB_CHECK(std::lround(pan * 1000.0) == expected.tenths);
         SEQLIB_CHECK(std::lround(64.0 + pan * 64.0) == expected.midi || (expected.midi == 127 && pan == 1.0));
@@ -268,17 +298,24 @@ SEQLIB_TEST(units, ZoneAttenuations)
 {
     for (const ZoneAttenuationCase& c : kZoneAttenuations)
     {
-        seqlib::test::SetContext("cB " + std::to_string(c.centibels));
+        seqlib::testing::SetContext("cB " + std::to_string(c.centibels));
 
         const seqlib::sf2::ZoneAttenuation attenuation = seqlib::sf2::ToZoneAttenuation(c.centibels);
 
         SEQLIB_CHECK(attenuation.generator == c.generator);
-        SEQLIB_REQUIRE(attenuation.modulator.has_value() == (c.modulator != 0));
+        if (!seqlib::testing::Check(attenuation.modulator.has_value() == (c.modulator != 0),
+                                    c.modulator != 0 ? "a modulator" : "no modulator"))
+        {
+            continue;
+        }
+
         if (attenuation.modulator)
         {
-            const seqlib::sf2::Modulator& m = *attenuation.modulator;
-            SEQLIB_CHECK(m.source == 0 && m.dest == 48 && m.amount == c.modulator);
-            SEQLIB_CHECK(m.amount_source == 0 && m.transform == 0);
+            namespace sf2 = seqlib::sf2;
+            const sf2::Modulator& m = *attenuation.modulator;
+            SEQLIB_CHECK(m.source == sf2::kNoController && m.dest == sf2::kInitialAttenuation &&
+                         m.amount == c.modulator);
+            SEQLIB_CHECK(m.amount_source == sf2::kNoController && m.transform == sf2::kLinear);
         }
     }
 }
@@ -290,7 +327,7 @@ SEQLIB_TEST(units, ZoneAttenuationsPlayAtTheirLevel)
     for (int tenths = 0; tenths <= 14400; tenths++)
     {
         const double centibels = tenths / 10.0;
-        seqlib::test::SetContext("cB " + std::to_string(centibels));
+        seqlib::testing::SetContext("cB " + std::to_string(centibels));
 
         const seqlib::sf2::ZoneAttenuation attenuation = seqlib::sf2::ToZoneAttenuation(centibels);
 

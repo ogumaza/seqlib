@@ -15,23 +15,18 @@
 #include "bytes.h"
 #include "seqlib/read_error.h"
 #include "seqlib/sf2/soundfont.h"
+#include "sf2/format.h"
 
 namespace seqlib::sf2
 {
 namespace
 {
 
+using detail::kLoopPadding;
+using detail::kMinLoop;
+using detail::kZeroPoints;
 using detail::LoadLe16;
 using detail::LoadLe32;
-
-// The sizes of the pdta chunks' records: a preset header (phdr), a bag (pbag and ibag), a modulator (pmod and imod), a
-// generator (pgen and igen), an instrument header (inst) and a sample header (shdr).
-constexpr std::size_t kPresetHeaderSize = 38;
-constexpr std::size_t kBagSize = 4;
-constexpr std::size_t kModulatorSize = 10;
-constexpr std::size_t kGeneratorSize = 4;
-constexpr std::size_t kInstrumentHeaderSize = 22;
-constexpr std::size_t kSampleHeaderSize = 46;
 
 // The pdta chunks and the size of their records.
 constexpr std::pair<const char*, std::size_t> kRecordSizes[] = {
@@ -40,8 +35,13 @@ constexpr std::pair<const char*, std::size_t> kRecordSizes[] = {
     {"shdr", kSampleHeaderSize},
 };
 
-// Zero points that every sample has after its end.
-constexpr uint32_t kZeroPoints = 46;
+// Where a preset header (phdr) holds the preset's program and bank.
+constexpr std::size_t kProgramOffset = 20;
+constexpr std::size_t kBankOffset = 22;
+
+// The lowest and the highest sample rates that Check accepts, in hertz.
+constexpr uint32_t kMinRate = 400;
+constexpr uint32_t kMaxRate = 200000;
 
 // The fields of a sample header (shdr) record after its name: where the sample and its loop lie among the smpl chunk's
 // points, its rate, the other sample of a stereo pair, and its type.
@@ -371,7 +371,8 @@ private:
         std::set<std::pair<uint16_t, uint16_t>> presets;
         for (std::size_t i = 0; i + 1 < Count("phdr"); i++)
         {
-            const uint16_t program = LoadLe16(At("phdr", i) + 20), bank = LoadLe16(At("phdr", i) + 22);
+            const uint16_t program = LoadLe16(At("phdr", i) + kProgramOffset);
+            const uint16_t bank = LoadLe16(At("phdr", i) + kBankOffset);
             if (!presets.insert({bank, program}).second)
             {
                 problems_.push_back("duplicate preset bank " + std::to_string(bank) + " program " +
@@ -395,7 +396,7 @@ private:
             }
             if (!ZerosAfter(s.end))
             {
-                problems_.push_back(sample + ": not followed by 46 zero samples");
+                problems_.push_back(sample + ": not followed by " + std::to_string(kZeroPoints) + " zero samples");
             }
             if (s.loop_end > s.loop_start && !(s.start <= s.loop_start && s.loop_end <= s.end))
             {
@@ -415,7 +416,7 @@ private:
             {
                 problems_.push_back(sample + ": type " + std::to_string(s.type));
             }
-            if (s.rate < 400 || s.rate > 200000)
+            if (s.rate < kMinRate || s.rate > kMaxRate)
             {
                 problems_.push_back(sample + ": rate " + std::to_string(s.rate));
             }
@@ -453,7 +454,8 @@ private:
     {
         for (std::size_t i = 0; i + 1 < Count("inst"); i++)
         {
-            const uint16_t b0 = LoadLe16(At("inst", i) + 20), b1 = LoadLe16(At("inst", i + 1) + 20);
+            const uint16_t b0 = LoadLe16(At("inst", i) + kInstrumentZones.first_bag);
+            const uint16_t b1 = LoadLe16(At("inst", i + 1) + kInstrumentZones.first_bag);
             for (uint16_t b = b0; b < b1 && b + 1u < Count("ibag"); b++)
             {
                 std::map<uint16_t, uint16_t> gens;
@@ -473,7 +475,7 @@ private:
                 const int64_t before = int64_t{s.loop_start} - s.start;
                 const int64_t after = int64_t{s.end} - s.loop_end;
                 const int64_t length = int64_t{s.loop_end} - s.loop_start;
-                if (before < 8 || after < 8 || length < 32)
+                if (before < kLoopPadding || after < kLoopPadding || length < kMinLoop)
                 {
                     problems_.push_back("instrument " + std::to_string(i) + ": looping sample " +
                                         std::to_string(gens[kSampleId]) + " breaks the 8/32/8 rule");

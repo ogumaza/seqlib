@@ -53,6 +53,18 @@ constexpr uint8_t ControllerOf(EventKind kind)
     return static_cast<uint8_t>(static_cast<uint8_t>(kind) - kFirstControlKind);
 }
 
+// The number of tracks in a performance.
+constexpr int kTracks = 16;
+
+// The number of keys: MIDI keys 0 to 127.
+constexpr int kKeys = 128;
+
+// The number of programs in a bank. Preset i plays bank i / kProgramsPerBank and program i % kProgramsPerBank.
+constexpr uint32_t kProgramsPerBank = 128;
+
+// General MIDI drum channel (channel 10).
+constexpr int kDrumChannel = 9;
+
 // An event on a track's timeline.
 //
 // MIDI has one set of controllers per channel. A player's channels can keep other settings than the track's later
@@ -95,10 +107,10 @@ struct Performance
 
     uint32_t timebase = 48; // ticks per quarter note
     std::vector<Tempo> tempo;
-    std::array<std::vector<TrackEvent>, 16> tracks;
+    std::array<std::vector<TrackEvent>, kTracks> tracks;
 
     // Each track's name for its MIDI tracks. An empty name gives "Track <n>".
-    std::array<std::string, 16> track_names;
+    std::array<std::string, kTracks> track_names;
 
     // The start of each tick's frame, in fractional ticks. MIDI events go at these positions. Without an entry, an
     // event goes at its tick.

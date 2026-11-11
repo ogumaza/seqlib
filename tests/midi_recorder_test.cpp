@@ -7,7 +7,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <set>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -71,23 +73,24 @@ struct Recording
 
 void CheckEvents(const std::vector<TrackEvent>& actual, const std::vector<TrackEvent>& expected)
 {
-    SEQLIB_CHECK(actual.size() == expected.size());
+    SEQLIB_CHECK_EQ(actual.size(), expected.size());
     for (std::size_t i = 0; i < actual.size() && i < expected.size(); i++)
     {
-        seqlib::test::SetContext("event " + std::to_string(i));
+        seqlib::testing::SetContext("event " + std::to_string(i));
         const TrackEvent& a = actual[i];
         const TrackEvent& e = expected[i];
-        SEQLIB_CHECK(a.tick == e.tick);
-        SEQLIB_CHECK(a.kind == e.kind);
-        SEQLIB_CHECK(a.key == e.key);
-        SEQLIB_CHECK(a.value == e.value);
-        SEQLIB_CHECK(a.preset == e.preset);
+        SEQLIB_CHECK_EQ(a.tick, e.tick);
+        SEQLIB_CHECK_EQ(a.kind, e.kind);
+        SEQLIB_CHECK_EQ(a.key, e.key);
+        SEQLIB_CHECK_EQ(a.value, e.value);
+        SEQLIB_CHECK_EQ(a.preset, e.preset);
         SEQLIB_CHECK(a.semitones == e.semitones);
-        SEQLIB_CHECK(a.note == e.note);
-        SEQLIB_CHECK(a.part == e.part);
+        SEQLIB_CHECK_EQ(a.note, e.note);
+        SEQLIB_CHECK_EQ(a.part, e.part);
         SEQLIB_CHECK(a.after == e.after);
     }
-    seqlib::test::SetContext("");
+
+    seqlib::testing::SetContext("");
 }
 
 // Notes and settings in three ticks, with a note-off at the second and a note-off a fraction after the third.
@@ -224,9 +227,14 @@ SEQLIB_TEST(midi_recorder, SendPreset)
 {
     Recording r(FirstOptions());
     TrackOutput& out = r.outputs[2];
-    SEQLIB_CHECK(r.recorder.SendPreset(r.perf, out, 4, 300));
-    SEQLIB_CHECK(!r.recorder.SendPreset(r.perf, out, 4, 300));
-    SEQLIB_CHECK(r.recorder.SendPreset(r.perf, out, 5, 7));
+
+    const bool first = r.recorder.SendPreset(r.perf, out, 4, 300);
+    const bool repeat = r.recorder.SendPreset(r.perf, out, 4, 300);
+    const bool second = r.recorder.SendPreset(r.perf, out, 5, 7);
+
+    SEQLIB_CHECK(first);
+    SEQLIB_CHECK(!repeat);
+    SEQLIB_CHECK(second);
     CheckEvents(r.perf.tracks[2], {{.tick = 4, .kind = EventKind::kPreset, .preset = 300},
                                    {.tick = 5, .kind = EventKind::kPreset, .preset = 7}});
     SEQLIB_CHECK((out.sent.at({0, EventKind::kPreset}) == 7));
@@ -446,7 +454,9 @@ SEQLIB_TEST(midi_recorder, Options)
     RecorderOptions options;
     options.resend_on_switch = true;
     options.pitch_tolerance = 0.25f;
+
     const Recorder rec(options);
+
     SEQLIB_CHECK(rec.Options().resend_on_switch && !rec.Options().settings_before_all_events);
     SEQLIB_CHECK(!rec.Options().replace_anywhere_in_tick && !rec.Options().frame_ticks_from_zero);
     SEQLIB_CHECK(rec.Options().pitch_tolerance == 0.25f);
@@ -456,13 +466,19 @@ SEQLIB_TEST(midi_recorder, Notes)
 {
     Recording r(SecondOptions());
     Recorder& rec = r.recorder;
-    SEQLIB_CHECK(rec.NextNote() == 1);
     r.outputs[4].part = 3;
-    SEQLIB_CHECK(rec.NoteOn(r.perf, r.outputs[4], 2, 70, 127) == 1);
-    SEQLIB_CHECK(rec.NextNote() == 2);
-    SEQLIB_CHECK(rec.NoteOn(r.perf, r.outputs[4], 2, 70, 1) == 2);
+
+    const uint32_t next_before = rec.NextNote();
+    const uint32_t first = rec.NoteOn(r.perf, r.outputs[4], 2, 70, 127);
+    const uint32_t next_after = rec.NextNote();
+    const uint32_t second = rec.NoteOn(r.perf, r.outputs[4], 2, 70, 1);
     rec.NoteOff(r.perf, 4, 3, 3, 70, 1, 0.75);
     rec.NoteOff(r.perf, 4, 3, 1, 70, 2);
+
+    SEQLIB_CHECK(next_before == 1);
+    SEQLIB_CHECK(first == 1);
+    SEQLIB_CHECK(next_after == 2);
+    SEQLIB_CHECK(second == 2);
     CheckEvents(r.perf.tracks[4],
                 {{.tick = 2, .kind = EventKind::kNoteOn, .key = 70, .value = 127, .note = 1, .part = 3},
                  {.tick = 2, .kind = EventKind::kNoteOn, .key = 70, .value = 1, .note = 2, .part = 3},
@@ -477,13 +493,19 @@ SEQLIB_TEST(midi_recorder, SetTempo)
     {
         const Recorder rec(options);
         Performance perf;
+
         rec.SetTempo(perf, 0, 120.0);
         rec.SetTempo(perf, 0, 0.0);
         rec.SetTempo(perf, 0, 150.0);
         rec.SetTempo(perf, 3, 150.0);
         rec.SetTempo(perf, 4, -10.0);
         rec.SetTempo(perf, 5, 90.5);
-        SEQLIB_REQUIRE_EQ(perf.tempo.size(), 2);
+
+        if (!seqlib::testing::Check(perf.tempo.size() == 2, "2 tempos, not " + std::to_string(perf.tempo.size())))
+        {
+            continue;
+        }
+
         SEQLIB_CHECK(perf.tempo[0].tick == 0 && perf.tempo[0].bpm == 150.0);
         SEQLIB_CHECK(perf.tempo[1].tick == 5 && perf.tempo[1].bpm == 90.5);
     }
@@ -495,16 +517,19 @@ SEQLIB_TEST(midi_recorder, FrameTicksFromZero)
     // tick.
     const std::vector<double> kTimes = {10.0, 12.0, 20.0, 35.0, 35.0, 50.0};
     const double kStarts[] = {4.0, 4.0, 18.0, 33.0, 33.0, 52.0};
+
     for (const bool from_zero : {false, true})
     {
         RecorderOptions options;
         options.frame_ticks_from_zero = from_zero;
         const Recorder rec(options);
         Performance perf;
+
         for (uint32_t tick = 0; tick < kTimes.size(); tick++)
         {
             rec.RecordFrameStart(perf, std::span(kTimes).first(tick + 1), tick, kStarts[tick]);
         }
+
         const std::vector<double> expected = {0.0, from_zero ? 0.0 : -3.0, 1.75, 2.0 + 13.0 / 15.0, 2.0 + 13.0 / 15.0,
                                               5.0};
         SEQLIB_CHECK(perf.frame_ticks == expected);
@@ -526,7 +551,7 @@ SEQLIB_TEST(midi_recorder, CutAtNoteIdZero)
     CheckEvents(r.perf.tracks[0], {{.tick = 1, .kind = EventKind::kVolume, .value = 70}});
 }
 
-SEQLIB_TEST(midi_recorder, CutAtPassEnd)
+SEQLIB_TEST(midi_recorder, CutAtAndClampNoteOffs)
 {
     // Notes before, across and at the end tick, a note-off a fraction after it, and a later note-off.
     Recording r(SecondOptions());
@@ -538,9 +563,12 @@ SEQLIB_TEST(midi_recorder, CutAtPassEnd)
     rec.NoteOff(r.perf, 1, 3, 0, 62, b);
     rec.NoteOff(r.perf, 0, 4, 0, 64, c);
     rec.NoteOff(r.perf, 0, 4, 0, 60, a, 0.5);
-    SEQLIB_CHECK((CutAt(r.perf, 3) == std::set<uint32_t>{c}));
+
+    const std::set<uint32_t> cut = CutAt(r.perf, 3);
     rec.NoteOff(r.perf, 0, 5, 0, 60, a);
     ClampNoteOffs(r.perf, 3);
+
+    SEQLIB_CHECK((cut == std::set<uint32_t>{c}));
     CheckEvents(r.perf.tracks[0], {{.tick = 0, .kind = EventKind::kNoteOn, .key = 60, .value = 100, .note = 1},
                                    {.tick = 3, .kind = EventKind::kVolume, .value = 70},
                                    {.tick = 3, .kind = EventKind::kNoteOff, .key = 60, .note = 1}});
@@ -551,47 +579,57 @@ SEQLIB_TEST(midi_recorder, CutAtPassEnd)
 SEQLIB_TEST(midi_recorder, Levels)
 {
     Recorder rec;
-    SEQLIB_CHECK(rec.Expression(100.4) == 100);
-    SEQLIB_CHECK(rec.Expression(63.5) == 64);
-    SEQLIB_CHECK(rec.Expression(127.6) == 127);
-    SEQLIB_CHECK(rec.Expression(-3.0) == 0);
-    rec.SetLevelScale(0.5);
-    SEQLIB_CHECK(rec.Expression(200.0) == 100);
-    SEQLIB_CHECK(rec.Expression(300.0) == 127);
+    Recorder halved;
+    halved.SetLevelScale(0.5);
+    const double first_peak = rec.LevelPeak();
 
-    SEQLIB_CHECK(rec.LevelPeak() == 0.0);
     rec.RaiseLevelPeak(10.0);
     rec.RaiseLevelPeak(250.5);
     rec.RaiseLevelPeak(20.0);
+
+    SEQLIB_CHECK_EQ(rec.Expression(100.4), 100);
+    SEQLIB_CHECK_EQ(rec.Expression(63.5), 64);
+    SEQLIB_CHECK_EQ(rec.Expression(127.6), 127);
+    SEQLIB_CHECK_EQ(rec.Expression(-3.0), 0);
+    SEQLIB_CHECK_EQ(halved.Expression(200.0), 100);
+    SEQLIB_CHECK_EQ(halved.Expression(300.0), 127);
+    SEQLIB_CHECK(first_peak == 0.0);
     SEQLIB_CHECK(rec.LevelPeak() == 250.5);
 }
 
 SEQLIB_TEST(midi_recorder, ApproximationsAndWarnings)
 {
     Recorder rec;
-    SEQLIB_CHECK(rec.Approximations().empty() && rec.Warnings().empty());
+    const bool empty_at_first = rec.Approximations().empty() && rec.Warnings().empty();
+
     rec.Approximate("second LFO (omitted)");
     rec.Approximate("pan LFO (omitted)");
     rec.Approximate("second LFO (omitted)");
     rec.Warn("track 3 stopped");
     rec.Warn("track 3 stopped");
-    SEQLIB_CHECK((rec.Approximations() ==
-                  std::map<std::string, uint32_t>{{"pan LFO (omitted)", 1}, {"second LFO (omitted)", 2}}));
-    SEQLIB_CHECK((rec.Warnings() == std::vector<std::string>{"track 3 stopped", "track 3 stopped"}));
-
     // A copy records apart from the original.
     Recorder copy = rec;
     copy.Approximate("pan LFO (omitted)");
-    SEQLIB_CHECK(rec.Approximations().at("pan LFO (omitted)") == 1);
-    SEQLIB_CHECK(copy.Approximations().at("pan LFO (omitted)") == 2);
+
+    SEQLIB_CHECK(empty_at_first);
+    SEQLIB_CHECK((rec.Approximations() ==
+                  std::map<std::string, uint32_t>{{"pan LFO (omitted)", 1}, {"second LFO (omitted)", 2}}));
+    SEQLIB_CHECK((rec.Warnings() == std::vector<std::string>{"track 3 stopped", "track 3 stopped"}));
+    SEQLIB_CHECK_EQ(rec.Approximations().at("pan LFO (omitted)"), 1);
+    SEQLIB_CHECK_EQ(copy.Approximations().at("pan LFO (omitted)"), 2);
 }
 
 SEQLIB_TEST(midi_recorder, PresetIndices)
 {
     std::vector<std::string> presets;
-    SEQLIB_CHECK(PresetIndex(presets, std::string("piano")) == 0);
-    SEQLIB_CHECK(PresetIndex(presets, std::string("strings")) == 1);
-    SEQLIB_CHECK(PresetIndex(presets, std::string("piano")) == 0);
+
+    const uint32_t piano = PresetIndex(presets, std::string("piano"));
+    const uint32_t strings = PresetIndex(presets, std::string("strings"));
+    const uint32_t piano_again = PresetIndex(presets, std::string("piano"));
+
+    SEQLIB_CHECK_EQ(piano, 0);
+    SEQLIB_CHECK_EQ(strings, 1);
+    SEQLIB_CHECK_EQ(piano_again, 0);
     SEQLIB_CHECK((presets == std::vector<std::string>{"piano", "strings"}));
 }
 

@@ -5,6 +5,7 @@
 
 #include "seqlib/midi/builder.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -33,8 +34,8 @@ constexpr char kOrderGolden[] =
 // The bytes of RetimeCase()'s file.
 constexpr char kRetimeGolden[] = "4d546864000000060001000100f04d54726b0000000c0a913e640a813e001eff2f00";
 
-// Events of every kind added out of order, several at one tick, with steps, values out of range, a tempo repeated after
-// a loopStart marker and a delta of three bytes.
+// Events of every kind but key pressures and system exclusive messages, added out of order, several at one tick, with
+// steps, values out of range, a tempo repeated after a loopStart marker and a delta of three bytes.
 FileBuilder OrderCase()
 {
     FileBuilder file(96);
@@ -118,11 +119,35 @@ SEQLIB_TEST(builder, LevelsToControllers)
 
     for (const Case& c : kCases)
     {
+        seqlib::testing::SetContext("left " + std::to_string(c.left) + ", right " + std::to_string(c.right));
         int cc10 = -1;
         int cc11 = -1;
         seqlib::midi::LevelsToControllers(c.left, c.right, cc10, cc11);
-        SEQLIB_CHECK(cc10 == c.cc10 && cc11 == c.cc11);
+        SEQLIB_CHECK_EQ(cc10, c.cc10);
+        SEQLIB_CHECK_EQ(cc11, c.cc11);
     }
+
+    seqlib::testing::SetContext("");
+}
+
+// A tempo event stores the tempo in 24 bits. Tempo() writes a tempo slower than 0xFFFFFF microseconds per quarter note
+// as 0xFFFFFF. It doesn't write the much faster tempo of the low 24 bits.
+SEQLIB_TEST(builder, TempoClampsToTheSlowestThatAnEventHolds)
+{
+    TrackBuilder track;
+
+    track.Tempo(0, 0xFFFFFF);
+    track.Tempo(1, 0x1000000);
+    track.Tempo(2, 0xFFFFFFFF);
+    const std::vector<uint8_t> actual = track.Encode();
+
+    const std::vector<uint8_t> kExpected = {
+        0x00, 0xFF, 0x51, 0x03, 0xFF, 0xFF, 0xFF, // the slowest tempo
+        0x01, 0xFF, 0x51, 0x03, 0xFF, 0xFF, 0xFF, // 0x1000000, clamped
+        0x01, 0xFF, 0x51, 0x03, 0xFF, 0xFF, 0xFF, // 0xFFFFFFFF, clamped
+        0x00, 0xFF, 0x2F, 0x00,                   // end of track
+    };
+    SEQLIB_CHECK(actual == kExpected);
 }
 
 // A key pressure goes after the note-offs at its tick and before the note-ons. That includes a note-on that goes before
@@ -130,6 +155,7 @@ SEQLIB_TEST(builder, LevelsToControllers)
 SEQLIB_TEST(builder, KeyPressureSortsBeforeNoteOns)
 {
     TrackBuilder track;
+
     track.NoteOn(0, 1, 60, 100);
     track.KeyPressure(0, 1, 60, 127);
     track.Program(0, 1, 5);
@@ -137,6 +163,7 @@ SEQLIB_TEST(builder, KeyPressureSortsBeforeNoteOns)
     track.NoteOn(0, 1, 64, 90, true);
     track.KeyPressure(5, 1, 60, 200);
     track.KeyPressure(5, 1, 61, -3);
+    const std::vector<uint8_t> actual = track.Encode();
 
     const std::vector<uint8_t> kExpected = {
         0x00, 0x81, 0x3E, 0x00, // note off
@@ -148,7 +175,7 @@ SEQLIB_TEST(builder, KeyPressureSortsBeforeNoteOns)
         0x00, 0xA1, 0x3D, 0x00, // key pressure, clamped to 0
         0x00, 0xFF, 0x2F, 0x00, // end of track
     };
-    SEQLIB_CHECK(track.Encode() == kExpected);
+    SEQLIB_CHECK(actual == kExpected);
 }
 
 // A system exclusive message goes after the meta events at its tick and before the note-offs and key pressures. Its
@@ -203,11 +230,12 @@ SEQLIB_TEST(builder, SysExRefusesMalformedMessages)
 
     for (std::size_t i = 0; i < kRefused.size(); i++)
     {
-        seqlib::test::SetContext("message " + std::to_string(i));
+        seqlib::testing::SetContext("message " + std::to_string(i));
         const std::string error = seqlib::testing::ErrorOf<std::invalid_argument>([&] { track.SysEx(0, kRefused[i]); });
         SEQLIB_CHECK(!error.empty());
     }
-    seqlib::test::SetContext("");
+
+    seqlib::testing::SetContext("");
 
     SEQLIB_CHECK(track.Encode() == std::vector<uint8_t>({0x00, 0xFF, 0x2F, 0x00}));
 }
@@ -233,6 +261,33 @@ SEQLIB_TEST(builder, BendRangeMatchesItsControllers)
     // Each event takes four bytes: the note on, the six controllers, the bend and the end of the track.
     SEQLIB_CHECK(with_range.Encode() == by_hand.Encode());
     SEQLIB_CHECK(by_hand.Encode().size() == 9 * 4);
+}
+
+// The controller numbers are those of the MIDI 1.0 specification's table of control changes. BendRange ends by
+// selecting the null RPN.
+SEQLIB_TEST(builder, ControllerNumbersFollowTheSpecification)
+{
+    TrackBuilder by_hand;
+    by_hand.Control(0, 0, cc::kRpnMsb, cc::kNullRpn);
+    by_hand.Control(0, 0, cc::kRpnLsb, cc::kNullRpn);
+    TrackBuilder with_range;
+
+    with_range.BendRange(0, 0, 2);
+
+    const std::vector<uint8_t> range = with_range.Encode();
+    const std::vector<uint8_t> null_rpn = by_hand.Encode();
+    SEQLIB_CHECK(cc::kPortamentoTime == 5);
+    SEQLIB_CHECK(cc::kVolumeLsb == 39);
+    SEQLIB_CHECK(cc::kPanLsb == 42);
+    SEQLIB_CHECK(cc::kSustain == 64);
+    SEQLIB_CHECK(cc::kPortamento == 65);
+    SEQLIB_CHECK(cc::kReleaseTime == 72 && cc::kAttackTime == 73 && cc::kBrightness == 74 && cc::kDecayTime == 75);
+    SEQLIB_CHECK(cc::kPortamentoControl == 84);
+    SEQLIB_CHECK(cc::kNrpnLsb == 98 && cc::kNrpnMsb == 99);
+    SEQLIB_CHECK(cc::kMonoOn == 126 && cc::kPolyOn == 127);
+    SEQLIB_CHECK(cc::kNullRpn == 127);
+    SEQLIB_REQUIRE_EQ(range.size(), 6 * 4 + 4);
+    SEQLIB_CHECK(std::equal(null_rpn.begin(), null_rpn.end(), range.end() - 12));
 }
 
 } // namespace

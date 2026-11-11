@@ -7,7 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <sstream>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 
@@ -18,47 +18,23 @@ namespace seqlib::test
 namespace
 {
 
-// What the checks wrote while `f` ran, and the checks and failures that it added.
-struct Captured
+// The state of the checks that Capture sets aside.
+struct State
 {
-    std::string text;
     int checks = 0;
     int failures = 0;
+    std::string context;
+    std::string test_name;
+    std::ostream* failure_stream = nullptr;
+    std::ostream* success_stream = nullptr;
+
+    bool operator==(const State&) const = default;
 };
 
-// Runs `f` with the checks' output in a string, and with the counts, the context and the test's name set aside.
-template <typename F>
-Captured Capture(F f)
+State CurrentState()
 {
-    namespace t = seqlib::testing;
-    const int checks = t::checks;
-    const int failures = t::failures;
-    const std::string context = t::context;
-    const std::string name = t::test_name;
-    std::ostream* failure_stream = t::failure_stream;
-    std::ostream* success_stream = t::success_stream;
-    std::ostringstream out;
-    t::checks = 0;
-    t::failures = 0;
-    t::context.clear();
-    t::test_name.clear();
-    t::failure_stream = &out;
-    t::success_stream = &out;
-
-    f();
-
-    Captured captured;
-    captured.text = out.str();
-    captured.checks = t::checks;
-    captured.failures = t::failures;
-    t::checks = checks;
-    t::failures = failures;
-    t::context = context;
-    t::test_name = name;
-    t::failure_stream = failure_stream;
-    t::success_stream = success_stream;
-
-    return captured;
+    return {seqlib::testing::checks,    seqlib::testing::failures,       seqlib::testing::context,
+            seqlib::testing::test_name, seqlib::testing::failure_stream, seqlib::testing::success_stream};
 }
 
 // A check that passes after a failed check inside it.
@@ -107,7 +83,8 @@ SEQLIB_TEST(testing, CheckGivesItsResult)
     bool passed = false;
     bool failed = true;
     int line = 0;
-    const Captured c = Capture(
+
+    const seqlib::testing::Captured c = seqlib::testing::Capture(
         [&]
         {
             passed = seqlib::testing::Check(true, "never shown");
@@ -123,7 +100,7 @@ SEQLIB_TEST(testing, CheckGivesItsResult)
 
 SEQLIB_TEST(testing, CheckEqGivesBothValues)
 {
-    const Captured c = Capture(
+    const seqlib::testing::Captured c = seqlib::testing::Capture(
         []
         {
             SEQLIB_CHECK_EQ(2 + 2, 4);
@@ -137,18 +114,15 @@ SEQLIB_TEST(testing, CheckEqGivesBothValues)
 SEQLIB_TEST(testing, CheckEqComparesValues)
 {
     // Large unsigned numbers print as unsigned, and a signed -1 doesn't equal an unsigned maximum.
-    const Captured big = Capture(
+    const seqlib::testing::Captured big = seqlib::testing::Capture(
         []
         {
             SEQLIB_CHECK_EQ(UINT64_MAX, -1);
             SEQLIB_CHECK_EQ(uint64_t{1} << 63, 0);
         });
-    SEQLIB_CHECK(big.checks == 2 && big.failures == 2);
-    SEQLIB_CHECK(big.text.find("(18446744073709551615 vs -1)") != std::string::npos);
-    SEQLIB_CHECK(big.text.find("(9223372036854775808 vs 0)") != std::string::npos);
 
     // bool, characters and enumerations compare by their values.
-    const Captured kinds = Capture(
+    const seqlib::testing::Captured kinds = seqlib::testing::Capture(
         []
         {
             SEQLIB_CHECK_EQ(true, 1);
@@ -156,6 +130,10 @@ SEQLIB_TEST(testing, CheckEqComparesValues)
             SEQLIB_CHECK_EQ(Color::kBlue, 2);
             SEQLIB_CHECK_EQ(Color::kRed, Color::kBlue);
         });
+
+    SEQLIB_CHECK(big.checks == 2 && big.failures == 2);
+    SEQLIB_CHECK(big.text.find("(18446744073709551615 vs -1)") != std::string::npos);
+    SEQLIB_CHECK(big.text.find("(9223372036854775808 vs 0)") != std::string::npos);
     SEQLIB_CHECK(kinds.checks == 4 && kinds.failures == 1);
     SEQLIB_CHECK(kinds.text.ends_with(": CHECK_EQ failed: Color::kRed == Color::kBlue (1 vs 2)\n"));
 }
@@ -163,17 +141,18 @@ SEQLIB_TEST(testing, CheckEqComparesValues)
 SEQLIB_TEST(testing, RequireEndsTheFunction)
 {
     // A failed REQUIRE ends the function. So does a failed REQUIRE_EQ.
-    bool reached = false;
-    const Captured plain = Capture([&] { RequireAll(false, 3, 3, reached); });
-    SEQLIB_CHECK(!reached && plain.checks == 1 && plain.failures == 1);
+    bool plain_reached = false;
+    bool equal_reached = false;
+    bool passing_reached = false;
 
-    reached = false;
-    const Captured equal = Capture([&] { RequireAll(true, 3, 4, reached); });
-    SEQLIB_CHECK(!reached && equal.checks == 2 && equal.failures == 1);
+    const seqlib::testing::Captured plain = seqlib::testing::Capture([&] { RequireAll(false, 3, 3, plain_reached); });
+    const seqlib::testing::Captured equal = seqlib::testing::Capture([&] { RequireAll(true, 3, 4, equal_reached); });
+    const seqlib::testing::Captured passing =
+        seqlib::testing::Capture([&] { RequireAll(true, 3, 3, passing_reached); });
 
-    reached = false;
-    const Captured passing = Capture([&] { RequireAll(true, 3, 3, reached); });
-    SEQLIB_CHECK(reached && passing.checks == 2 && passing.failures == 0);
+    SEQLIB_CHECK(!plain_reached && plain.checks == 1 && plain.failures == 1);
+    SEQLIB_CHECK(!equal_reached && equal.checks == 2 && equal.failures == 1);
+    SEQLIB_CHECK(passing_reached && passing.checks == 2 && passing.failures == 0);
 }
 
 // Uses a REQUIRE whose condition holds, after a failed check inside it. `reached` is set if the function goes on.
@@ -187,14 +166,16 @@ SEQLIB_TEST(testing, RequireLooksAtItsCondition)
 {
     // A failure inside the condition doesn't end the function. Only a false condition does.
     bool reached = false;
-    const Captured c = Capture([&] { RequireAfterAFailure(reached); });
+
+    const seqlib::testing::Captured c = seqlib::testing::Capture([&] { RequireAfterAFailure(reached); });
+
     SEQLIB_CHECK(reached && c.checks == 2 && c.failures == 1);
 }
 
 SEQLIB_TEST(testing, FailuresGiveTheContextAndTheTest)
 {
     // A failed SEQLIB_CHECK and a failed Check give the same parts.
-    const Captured c = Capture(
+    const seqlib::testing::Captured c = seqlib::testing::Capture(
         []
         {
             seqlib::testing::SetContext("case 7");
@@ -216,9 +197,13 @@ SEQLIB_TEST(testing, FailuresGiveTheContextAndTheTest)
 SEQLIB_TEST(testing, ErrorOfGivesTheMessage)
 {
     bool fail = true;
-    SEQLIB_CHECK(seqlib::testing::ErrorOf([&] { ThrowIf(fail); }) == "no such file");
+
+    const std::string error = seqlib::testing::ErrorOf([&] { ThrowIf(fail); });
     fail = false;
-    SEQLIB_CHECK(seqlib::testing::ErrorOf([&] { ThrowIf(fail); }).empty());
+    const std::string none = seqlib::testing::ErrorOf([&] { ThrowIf(fail); });
+
+    SEQLIB_CHECK(error == "no such file");
+    SEQLIB_CHECK(none.empty());
 }
 
 SEQLIB_TEST(testing, ErrorOfCatchesOnlyItsType)
@@ -250,17 +235,41 @@ SEQLIB_TEST(testing, ErrorOfCatchesOnlyItsType)
 SEQLIB_TEST(testing, SummaryGivesTheResult)
 {
     int failed_status = 0;
-    const Captured failed = Capture(
+    int passed_status = 1;
+
+    const seqlib::testing::Captured failed = seqlib::testing::Capture(
         [&]
         {
             seqlib::testing::failures = 2;
             failed_status = seqlib::testing::Summary("demo");
         });
-    SEQLIB_CHECK(failed_status == 1 && failed.text == "2 check(s) failed\n");
+    const seqlib::testing::Captured passed =
+        seqlib::testing::Capture([&] { passed_status = seqlib::testing::Summary("demo"); });
 
-    int passed_status = 1;
-    const Captured passed = Capture([&] { passed_status = seqlib::testing::Summary("demo"); });
+    SEQLIB_CHECK(failed_status == 1 && failed.text == "2 check(s) failed\n");
     SEQLIB_CHECK(passed_status == 0 && passed.text == "demo tests passed\n");
+}
+
+SEQLIB_TEST(testing, CaptureRestoresTheStateAfterAnException)
+{
+    // The function fails a check and changes the context and the test's name before it throws.
+    const auto fail_and_throw = []
+    {
+        seqlib::testing::SetContext("inner");
+        seqlib::testing::test_name = "Inner";
+        SEQLIB_CHECK(1 + 1 == 3);
+        throw std::runtime_error("bad input");
+    };
+
+    seqlib::testing::SetContext("outer");
+    const State before = CurrentState();
+
+    const std::string error = seqlib::testing::ErrorOf([&] { seqlib::testing::Capture(fail_and_throw); });
+    const State after = CurrentState();
+    seqlib::testing::SetContext("");
+
+    SEQLIB_CHECK(error == "bad input");
+    SEQLIB_CHECK(after == before);
 }
 
 } // namespace

@@ -14,6 +14,44 @@
 namespace seqlib::midi
 {
 
+// Status bytes. A channel message has its channel in the low four bits of its status byte.
+namespace status
+{
+
+constexpr uint8_t kNoteOff = 0x80;
+constexpr uint8_t kNoteOn = 0x90;
+constexpr uint8_t kKeyPressure = 0xA0;
+constexpr uint8_t kControl = 0xB0;
+constexpr uint8_t kProgram = 0xC0;
+constexpr uint8_t kChannelPressure = 0xD0;
+constexpr uint8_t kPitchBend = 0xE0;
+constexpr uint8_t kSysEx = 0xF0;
+constexpr uint8_t kSysExEnd = 0xF7; // in a file, also the start of an escape event
+constexpr uint8_t kMeta = 0xFF;     // in a file, the start of a meta event
+
+} // namespace status
+
+// Meta events: their types (the byte after the 0xFF of a meta event), and values that seqlib writes in them.
+namespace meta
+{
+
+constexpr uint8_t kText = 0x01;
+constexpr uint8_t kTrackName = 0x03;
+constexpr uint8_t kMarker = 0x06;
+constexpr uint8_t kEndOfTrack = 0x2F;
+constexpr uint8_t kTempo = 0x51;
+constexpr uint8_t kTimeSignature = 0x58;
+
+// The last two bytes of a time signature that seqlib writes: a metronome click every 24 MIDI clocks, and 8 notated 32nd
+// notes in a quarter note.
+constexpr uint8_t kClocksPerClick = 24;
+constexpr uint8_t kThirtySecondNotesPerQuarter = 8;
+
+// The largest value that the three bytes of a tempo event can store, in microseconds per quarter note.
+constexpr uint32_t kMaxMicrosPerQuarter = 0xFFFFFF;
+
+} // namespace meta
+
 // Appends `v` as a variable-length quantity: 7 bits a byte, most significant first, with the top bit set on all but the
 // last.
 void AppendVlq(std::vector<uint8_t>& out, uint32_t v);

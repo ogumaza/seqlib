@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -56,6 +57,15 @@ constexpr std::size_t kLoopSize = 24;
 // The size of a smpl chunk with one loop.
 constexpr auto kSamplerSize = static_cast<uint32_t>(kLoops + kLoopSize);
 
+// The most channels that a file of 16-bit samples can have. The fmt chunk gives the size of a block in 16 bits.
+constexpr std::size_t kMaxChannels = 32767;
+
+// The size of a block of a file of 16-bit samples: one sample of each of `channels` channels.
+uint16_t BlockSize(uint16_t channels)
+{
+    return static_cast<uint16_t>(channels * 2);
+}
+
 // The size of the fmt chunk in a file of `channels` channels. More than two channels take the extensible form.
 uint32_t FormatSize(uint16_t channels)
 {
@@ -78,7 +88,7 @@ void AppendHeaders(std::vector<uint8_t>& out, uint16_t channels, uint32_t rate, 
     AppendFourcc(out, "WAVE");
 
     // A block holds one sample of each channel. A channel mask of 0 assigns no speaker to any channel.
-    const auto block = static_cast<uint16_t>(channels * 2);
+    const uint16_t block = BlockSize(channels);
     const bool extensible = channels > 2;
     AppendFourcc(out, "fmt ");
     AppendLe32(out, FormatSize(channels));
@@ -237,8 +247,8 @@ Format ReadFormat(std::span<const uint8_t> bytes, const Chunk& fmt)
 }
 
 // The PCM sample of `width` bytes at `p`, 1 to 4, as 16 bits. An 8-bit sample is unsigned. A deeper one is signed, and
-// rounds to 16 bits half up.
-int16_t PcmSample(const uint8_t* p, std::size_t width)
+// rounds to 16 bits half up. A sample that rounds counts in `inexact`.
+int16_t PcmSample(const uint8_t* p, std::size_t width, std::size_t& inexact)
 {
     if (width == 1)
     {
@@ -253,6 +263,7 @@ int16_t PcmSample(const uint8_t* p, std::size_t width)
     if (width > 2)
     {
         const int shift = static_cast<int>(width - 2) * 8;
+        inexact += (value & ((int64_t{1} << shift) - 1)) != 0;
         value = (value + (int64_t{1} << (shift - 1))) >> shift;
     }
 
@@ -260,28 +271,29 @@ int16_t PcmSample(const uint8_t* p, std::size_t width)
 }
 
 // The floating-point sample of `width` bytes at `p`, 4 or 8, as 16 bits. It scales by 32,768, rounds half away from
-// zero and clamps. NaN gives 0.
-int16_t FloatSample(const uint8_t* p, std::size_t width)
+// zero and clamps. NaN gives 0. A sample that rounds, clamps or is NaN counts in `inexact`.
+int16_t FloatSample(const uint8_t* p, std::size_t width, std::size_t& inexact)
 {
     double value = 0.0;
     if (width == 4)
     {
-        const uint32_t bits = LoadLe32(p);
-        float single = 0.0f;
-        std::memcpy(&single, &bits, 4);
-        value = single;
+        value = std::bit_cast<float>(LoadLe32(p));
     }
     else
     {
-        const uint64_t bits = LoadLe32(p) | uint64_t{LoadLe32(p + 4)} << 32;
-        std::memcpy(&value, &bits, 8);
+        value = std::bit_cast<double>(LoadLe32(p) | uint64_t{LoadLe32(p + 4)} << 32);
     }
     if (std::isnan(value))
     {
+        ++inexact;
         return 0;
     }
 
-    return static_cast<int16_t>(std::lround(std::clamp(value * 32768.0, -32768.0, 32767.0)));
+    const double scaled = value * 32768.0;
+    const long rounded = std::lround(std::clamp(scaled, -32768.0, 32767.0));
+    inexact += static_cast<double>(rounded) != scaled;
+
+    return static_cast<int16_t>(rounded);
 }
 
 // Reads the smpl chunk `smpl` in `bytes` into `contents`: the number of loops, and the first loop's type and number of
@@ -319,7 +331,7 @@ void ReadLoop(std::span<const uint8_t> bytes, const Chunk& smpl, std::size_t fra
 
 std::vector<uint8_t> WavFile(std::span<const int16_t> samples, uint32_t rate)
 {
-    const uint32_t data_size = static_cast<uint32_t>(samples.size() * 2);
+    const uint32_t data_size = static_cast<uint32_t>(samples.size() * BlockSize(1));
     std::vector<uint8_t> out;
     out.reserve(8 + HeaderSize(1) + data_size);
     AppendHeaders(out, 1, rate, data_size, 0);
@@ -334,7 +346,7 @@ std::vector<uint8_t> WavFile(std::span<const int16_t> samples, uint32_t rate)
 std::vector<uint8_t> WavFile(const Pcm& pcm, uint32_t rate)
 {
     // The channels and the loop.
-    if (pcm.channels.empty() || pcm.channels.size() > 32767)
+    if (pcm.channels.empty() || pcm.channels.size() > kMaxChannels)
     {
         throw std::invalid_argument("a WAV file holds 1 to 32,767 channels");
     }
@@ -354,7 +366,7 @@ std::vector<uint8_t> WavFile(const Pcm& pcm, uint32_t rate)
     // The chunks' sizes. A block holds one sample of each channel. `headers` counts the bytes in the RIFF chunk other
     // than the samples.
     const auto channels = static_cast<uint16_t>(pcm.channels.size());
-    const auto block = static_cast<uint16_t>(channels * 2);
+    const uint16_t block = BlockSize(channels);
     const uint32_t sampler_size = pcm.loop ? 8 + kSamplerSize : 0;
     const uint32_t headers = HeaderSize(channels) + sampler_size;
     if (frames > (std::numeric_limits<uint32_t>::max() - headers) / block)
@@ -421,7 +433,7 @@ WavContents ReadWav(std::span<const uint8_t> bytes)
         for (std::size_t channel = 0; channel < format.channels; channel++)
         {
             const uint8_t* p = bytes.data() + data->start + frame * format.block + channel * format.width;
-            contents.pcm.channels[channel][frame] = sample(p, format.width);
+            contents.pcm.channels[channel][frame] = sample(p, format.width, contents.inexact);
         }
     }
 

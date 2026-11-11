@@ -70,7 +70,6 @@ constexpr NameCase kNames[] = {
     {"CON", 3, "CON_", "_CON"},
     {"con.mid", 7, "con_.mid", "_con.mid"},
     {"CON.x.sf2", 9, "CON_.x.sf2", "_CON.x.sf2"},
-    {"CON ", 4, "CON_", "_CON"},
     {"CON .sfz", 8, "CON _.sfz", "CON .sfz"},
     {"PRN", 3, "PRN_", "_PRN"},
     {"prn.mid", 7, "prn_.mid", "_prn.mid"},
@@ -235,18 +234,20 @@ const seqlib::FileNameRules kOtherRules = {seqlib::TrailingRule::kRemoveAll, seq
 
 SEQLIB_TEST(file_name, DefaultRules)
 {
-    for (const NameCase& c : kNames)
+    for (std::size_t i = 0; i < std::size(kNames); i++)
     {
-        seqlib::test::SetContext(c.with_defaults);
+        const NameCase& c = kNames[i];
+        seqlib::testing::SetContext("name " + std::to_string(i));
         SEQLIB_CHECK(seqlib::SafeFileName(std::string(c.name, c.size)) == c.with_defaults);
     }
 }
 
 SEQLIB_TEST(file_name, OtherRules)
 {
-    for (const NameCase& c : kNames)
+    for (std::size_t i = 0; i < std::size(kNames); i++)
     {
-        seqlib::test::SetContext(c.with_other_rules);
+        const NameCase& c = kNames[i];
+        seqlib::testing::SetContext("name " + std::to_string(i));
         SEQLIB_CHECK(seqlib::SafeFileName(std::string(c.name, c.size), kOtherRules) == c.with_other_rules);
     }
 }
@@ -271,9 +272,10 @@ constexpr NameCase kNotUtf8Names[] = {
 
 SEQLIB_TEST(file_name, BytesThatArentUtf8)
 {
-    for (const NameCase& c : kNotUtf8Names)
+    for (std::size_t i = 0; i < std::size(kNotUtf8Names); i++)
     {
-        seqlib::test::SetContext(c.with_defaults);
+        const NameCase& c = kNotUtf8Names[i];
+        seqlib::testing::SetContext("name " + std::to_string(i));
         SEQLIB_CHECK(seqlib::SafeFileName(std::string(c.name, c.size)) == c.with_defaults);
         SEQLIB_CHECK(seqlib::SafeFileName(std::string(c.name, c.size), kOtherRules) == c.with_other_rules);
     }

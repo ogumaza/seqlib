@@ -8,6 +8,8 @@
 #include <cmath>
 #include <iterator>
 
+#include "midi/values.h"
+
 namespace seqlib::midi
 {
 namespace
@@ -295,12 +297,12 @@ void Recorder::RecordFrameStart(Performance& perf, std::span<const double> tick_
     perf.frame_ticks.push_back(std::min(place, static_cast<double>(tick)));
 }
 
-void Recorder::SetPartLimits(const std::array<uint8_t, 16>& limits)
+void Recorder::SetPartLimits(const std::array<uint8_t, kTracks>& limits)
 {
     part_limits_ = limits;
 }
 
-const std::array<uint8_t, 16>& Recorder::PartsUsed() const
+const std::array<uint8_t, kTracks>& Recorder::PartsUsed() const
 {
     return parts_used_;
 }
@@ -312,7 +314,8 @@ const std::vector<PartSwitch>& Recorder::PartSwitches() const
 
 uint8_t Recorder::Expression(double level) const
 {
-    return static_cast<uint8_t>(std::clamp(static_cast<int>(std::lround(level * level_scale_)), 0, 127));
+    return static_cast<uint8_t>(
+        std::clamp(static_cast<int>(std::lround(level * level_scale_)), 0, detail::kMaxDataByte));
 }
 
 void Recorder::SetLevelScale(double scale)

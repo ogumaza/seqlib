@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-// Checks SoundFont 2 and MIDI files: seqlib::sf2::Check on each .sf2 file and seqlib::midi::Problems on each .mid file.
-// Prints each file's problems, and exits with 1 if any file has one.
+// Checks SoundFont 2 and MIDI files: seqlib::sf2::Check on each .sf2 file and seqlib::midi::Problems on each .mid or
+// .midi file. Prints each file's problems, and exits with 1 if any file has one.
 //
 // usage: seqlib_check <file.sf2|file.mid>...
 

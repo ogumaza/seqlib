@@ -5,10 +5,27 @@
 #include "seqlib/loop.h"
 
 #include <algorithm>
+#include <span>
 #include <utility>
+
+#include "sf2/format.h"
 
 namespace seqlib
 {
+namespace
+{
+
+// The samples of an empty channel: a sample requires at least one point.
+constexpr int16_t kSilence[] = {0};
+
+// The samples that PrepareForSoundFont appends from the loop start for interpolation. The format requires 8 points
+// after the loop.
+constexpr uint32_t kSoundFontTail = 32;
+
+// The fewest samples that PrepareForSfz repeats before the loop, puts in the loop and appends after it.
+constexpr uint32_t kSfzMinimum = 64;
+
+} // namespace
 
 PreparedWave UnrollLoop(const Pcm& pcm, uint32_t min_start, uint32_t min_before, uint32_t min_length, uint32_t after)
 {
@@ -16,20 +33,15 @@ PreparedWave UnrollLoop(const Pcm& pcm, uint32_t min_start, uint32_t min_before,
     w.loop = pcm.loop;
     for (const auto& ch : pcm.channels)
     {
-        std::vector<int16_t> src = ch;
-        if (src.empty())
-        {
-            src.push_back(0); // a sample requires at least one point
-        }
-
+        const std::span<const int16_t> src = ch.empty() ? std::span<const int16_t>(kSilence) : std::span(ch);
         if (!pcm.loop)
         {
-            w.channels.push_back(std::move(src));
+            w.channels.emplace_back(src.begin(), src.end());
             continue;
         }
 
         const uint32_t ls = pcm.loop_start, le = pcm.loop_end, len = le - ls;
-        const std::vector<int16_t> body(src.begin() + ls, src.begin() + le);
+        const std::span<const int16_t> body = src.subspan(ls, len);
         uint32_t before = 0;
         while (ls + before * len < min_start || before * len < min_before)
         {
@@ -68,12 +80,12 @@ PreparedWave UnrollLoop(const Pcm& pcm, uint32_t min_start, uint32_t min_before,
 
 PreparedWave PrepareForSoundFont(const Pcm& pcm)
 {
-    return UnrollLoop(pcm, 8, 0, 32, 32);
+    return UnrollLoop(pcm, detail::kLoopPadding, 0, detail::kMinLoop, kSoundFontTail);
 }
 
 PreparedWave PrepareForSfz(const Pcm& pcm, uint32_t crossfade)
 {
-    return UnrollLoop(pcm, 0, std::max<uint32_t>(crossfade, 64), 64, 64);
+    return UnrollLoop(pcm, 0, std::max(crossfade, kSfzMinimum), kSfzMinimum, kSfzMinimum);
 }
 
 } // namespace seqlib

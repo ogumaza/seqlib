@@ -11,14 +11,14 @@
 #include <utility>
 
 #include "bytes.h"
+#include "sf2/format.h"
 
 namespace seqlib::sf2
 {
 namespace
 {
 
-// The zero points that the format requires after each sample.
-constexpr uint32_t kZeroPoints = 46;
+using detail::kZeroPoints;
 
 // RIFF chunk buffer with little-endian numeric writes.
 struct Buffer
@@ -157,10 +157,11 @@ struct ZoneLists
     {
         bags.U16(static_cast<uint16_t>(gen_count));
         bags.U16(static_cast<uint16_t>(mod_count));
-        for (int i = 0; i < 5; i++)
-        {
-            mods.U16(0);
-        }
+        mods.U16(0); // source
+        mods.U16(0); // destination
+        mods.U16(0); // amount
+        mods.U16(0); // amount source
+        mods.U16(0); // transform
         gens.U32(0);
     }
 
@@ -254,8 +255,8 @@ std::vector<const Preset*> PresetOrder(const SoundFont& sf, const WriteOptions& 
     return order;
 }
 
-// Appends a preset header: the preset's name, program and bank, the index of its first zone, and three reserved
-// fields (library, genre and morphology).
+// Appends a preset header: the preset's name, program and bank, the index of its first zone, and three reserved fields
+// (library, genre and morphology).
 void AppendPresetHeader(Buffer& phdr, const std::string& name, uint16_t program, uint16_t bank, uint32_t first_zone)
 {
     phdr.Name(name);
@@ -335,14 +336,15 @@ Buffer SampleHeaders(const SoundFont& sf)
     }
 
     shdr.Name("EOS");
-    for (int i = 0; i < 5; i++)
-    {
-        shdr.U32(0);
-    }
-    shdr.U8(0);
-    shdr.U8(0);
-    shdr.U16(0);
-    shdr.U16(0);
+    shdr.U32(0); // start
+    shdr.U32(0); // end
+    shdr.U32(0); // loop start
+    shdr.U32(0); // loop end
+    shdr.U32(0); // sample rate
+    shdr.U8(0);  // original key
+    shdr.U8(0);  // pitch correction
+    shdr.U16(0); // link
+    shdr.U16(0); // type
 
     return shdr;
 }

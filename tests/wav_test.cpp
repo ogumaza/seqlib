@@ -6,31 +6,25 @@
 #include "seqlib/wav.h"
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "helpers.h"
 #include "seqlib/read_error.h"
 #include "test.h"
 
 namespace
 {
 
-std::vector<int16_t> Ramp()
-{
-    std::vector<int16_t> samples;
-    for (int i = 0; i < 100; i++)
-    {
-        samples.push_back(static_cast<int16_t>(i * 655 - 32768));
-    }
-
-    return samples;
-}
+using seqlib::test::Ramp;
 
 SEQLIB_TEST(wav, WavFiles)
 {
@@ -52,7 +46,7 @@ SEQLIB_TEST(wav, WavFiles)
         {{1234}, 44100, {0x52, 0x49, 0x46, 0x46, 0x26, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20,
                          0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x44, 0xac, 0x00, 0x00, 0x88, 0x58, 0x01, 0x00,
                          0x02, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0x02, 0x00, 0x00, 0x00, 0xd2, 0x04}},
-        {Ramp(),
+        {Ramp(100, 655, -32768),
          48000,
          {0x52, 0x49, 0x46, 0x46, 0xec, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20, 0x10, 0x00,
           0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x80, 0xbb, 0x00, 0x00, 0x00, 0x77, 0x01, 0x00, 0x02, 0x00, 0x10, 0x00,
@@ -74,16 +68,17 @@ SEQLIB_TEST(wav, WavFiles)
                           0x64, 0x61, 0x74, 0x61, 0x04, 0x00, 0x00, 0x00, 0xfe, 0xff, 0x02, 0x00}},
     };
 
-    for (const Case& c : kCases)
+    for (std::size_t i = 0; i < std::size(kCases); i++)
     {
-        SEQLIB_CHECK(seqlib::WavFile(c.samples, c.rate) == c.expected);
+        seqlib::testing::SetContext("case " + std::to_string(i));
+        SEQLIB_CHECK(seqlib::WavFile(kCases[i].samples, kCases[i].rate) == kCases[i].expected);
     }
 }
 
 // One channel without a loop gives the mono file's bytes.
 SEQLIB_TEST(wav, OneChannel)
 {
-    const std::vector<std::vector<int16_t>> kSamples = {{}, {0, 1, -1, 32767, -32768}, {1234}, Ramp()};
+    const std::vector<std::vector<int16_t>> kSamples = {{}, {0, 1, -1, 32767, -32768}, {1234}, Ramp(100, 655, -32768)};
     for (const std::vector<int16_t>& samples : kSamples)
     {
         seqlib::Pcm pcm;
@@ -261,14 +256,13 @@ std::vector<uint8_t> Sampler(const std::vector<std::array<uint32_t, 4>>& loops)
 }
 
 // The bytes of `values`, each a float or a double.
-template <class Real>
+template <typename Real>
 std::vector<uint8_t> Reals(const std::vector<Real>& values)
 {
     std::vector<uint8_t> bytes;
     for (const Real value : values)
     {
-        uint64_t bits = 0;
-        std::memcpy(&bits, &value, sizeof(Real));
+        const auto bits = std::bit_cast<std::conditional_t<sizeof(Real) == 4, uint32_t, uint64_t>>(value);
         Append(bytes, bits, sizeof(Real));
     }
 
@@ -287,7 +281,7 @@ std::vector<int16_t> Mono(const std::vector<uint8_t>& file)
 SEQLIB_TEST(wav, ReadWrittenFiles)
 {
     seqlib::Pcm mono;
-    mono.channels = {Ramp()};
+    mono.channels = {Ramp(100, 655, -32768)};
     seqlib::Pcm stereo;
     stereo.channels = {{1, 2, 3, 4}, {-1, -2, -3, -4}};
     stereo.loop = true;
@@ -298,6 +292,7 @@ SEQLIB_TEST(wav, ReadWrittenFiles)
 
     for (const seqlib::Pcm& pcm : {mono, stereo, three})
     {
+        seqlib::testing::SetContext(std::to_string(pcm.channels.size()) + " channels");
         const seqlib::WavContents contents = seqlib::ReadWav(seqlib::WavFile(pcm, 44100));
 
         SEQLIB_CHECK(contents.pcm.channels == pcm.channels && contents.rate == 44100);
@@ -347,6 +342,30 @@ SEQLIB_TEST(wav, ReadSampleFormats)
     SEQLIB_CHECK((Mono(extensible_float) == std::vector<int16_t>{-8192}));
 }
 
+// A sample whose 16-bit value isn't the file's value counts as inexact: a deeper PCM sample with low bits set, and a
+// floating-point sample that rounds, clamps or is NaN. 8-bit, 12-bit and 16-bit samples are exact.
+SEQLIB_TEST(wav, CountInexactSamples)
+{
+    const std::vector<uint8_t> eight = Riff({{"fmt ", Format(1, 1, 8000, 1, 8)}, {"data", {0, 128, 255, 1}}});
+    const std::vector<uint8_t> twelve = Riff({{"fmt ", Format(1, 1, 8000, 2, 12)}, {"data", {0x30, 0x12}}});
+    const std::vector<uint8_t> sixteen =
+        Riff({{"fmt ", Format(1, 1, 8000, 2, 16)}, {"data", {0x34, 0x12, 0xFF, 0xFF}}});
+    const std::vector<uint8_t> kDeepSamples = {0xFF, 0xFF, 0x7F, 0x00, 0x00, 0x80, 0x80, 0x00, 0x00,
+                                               0x7F, 0x00, 0x00, 0x80, 0xFF, 0xFF, 0x00, 0x01, 0x00};
+    const std::vector<uint8_t> deep = Riff({{"fmt ", Format(1, 1, 8000, 3, 24)}, {"data", kDeepSamples}});
+    const float kNan = std::numeric_limits<float>::quiet_NaN();
+    const std::vector<float> kSingles = {0.5f, -1.0f, 1.0f, 2.0f, kNan, 1.0f / 65536.0f, 3.0f / 32768.0f};
+    const std::vector<uint8_t> single = Riff({{"fmt ", Format(3, 1, 8000, 4, 32)}, {"data", Reals(kSingles)}});
+
+    const std::size_t deep_inexact = seqlib::ReadWav(deep).inexact;
+    const std::size_t single_inexact = seqlib::ReadWav(single).inexact;
+
+    SEQLIB_CHECK(seqlib::ReadWav(eight).inexact == 0 && seqlib::ReadWav(twelve).inexact == 0);
+    SEQLIB_CHECK(seqlib::ReadWav(sixteen).inexact == 0);
+    SEQLIB_CHECK(deep_inexact == 4);
+    SEQLIB_CHECK(single_inexact == 4);
+}
+
 // The chunks end at the RIFF chunk's end or at the file's end. A size too small for the form type counts as unknown.
 // Other chunks are skipped, with their pad bytes, and only the first chunk of each kind counts. The last chunk can lack
 // its pad byte. A data chunk can be empty. Bytes that hold no whole frame stay out.
@@ -355,10 +374,10 @@ SEQLIB_TEST(wav, ReadChunks)
     const std::vector<uint8_t> file =
         Riff({{"LIST", {1, 2, 3}}, {"fmt ", Format(1, 1, 8000, 2, 16)}, {"data", {1, 0, 2, 0}}});
     std::vector<uint8_t> large = file;
-    large[4] = 0xFF;
+    large[4] = 0xFF; // bytes 4 and 5: the low half of the RIFF size
     large[5] = 0xFF;
     std::vector<uint8_t> unknown = file;
-    unknown[4] = 0;
+    unknown[4] = 0; // bytes 4 and 5: the low half of the RIFF size
     unknown[5] = 0;
     std::vector<uint8_t> trailing = file;
     trailing.insert(trailing.end(), {'J', 'U', 'N', 'K', 0xFF, 0x00, 0x00, 0x00});
@@ -402,7 +421,7 @@ SEQLIB_TEST(wav, ReadRefusals)
     short_format.resize(14);
     const std::string kCompleting = {'\x10', '\x00', 'x', 'x'};
     std::vector<uint8_t> other_guid = Extensible(1, 1, 8000, 2, 16);
-    other_guid[26] = 0x21;
+    other_guid[26] = 0x21; // bytes 26 and 27: the third and fourth bytes of the subtype GUID
     other_guid[27] = 0x07;
 
     SEQLIB_CHECK(refused({}) && refused(avi) && refused(past));

@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "helpers.h"
 #include "seqlib/sf2/writer.h"
 #include "test.h"
 #include "test_data.h"
@@ -166,18 +167,6 @@ sf2::SoundFont EmptyCase()
     return sf;
 }
 
-// A preset with one zone. The zone names the instrument.
-sf2::Preset PresetOf(const std::string& name, uint16_t bank, uint16_t program, int instrument)
-{
-    sf2::Preset p;
-    p.name = name;
-    p.bank = bank;
-    p.program = program;
-    p.zones = {{{G::Value(sf2::kInstrument, instrument)}, {}}};
-
-    return p;
-}
-
 // The sorted form: INAM, ISFT, then ICMT, presets out of order with two of the same bank and program, a sample with a
 // loop and one without, generators out of order, and a modulator.
 sf2::SoundFont SortedCase()
@@ -320,7 +309,10 @@ SEQLIB_TEST(sf2_writer, GlobalZoneModulators)
                                   "0e023400003210000000"
                                   "8a021100f40100000000"
                                   "00000000000000000000"));
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     SEQLIB_CHECK(&sf2::kNoVelocityFilterFullBend == &sf2::kGlobalZoneModulators);
+#pragma GCC diagnostic pop
 }
 
 // SoundFont 2.04's default modulator from CC10 to pan (section 8.4.6): source 0x028A (CC10, linear, bipolar and

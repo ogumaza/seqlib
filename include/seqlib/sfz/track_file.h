@@ -44,6 +44,19 @@ struct Instruments
 // The folder of the samples, beside the sequences' folders. Each file's <control> header points there.
 inline const std::string kSamplesFolder = "samples";
 
+// The ID of the curve from CC10 to pan. It's the first custom curve: sfizz reserves the curve IDs 0 to 6. Curves that a
+// caller adds take higher IDs.
+inline constexpr int kPanCurve = 7;
+
+// Returns the <control> header of a track file, then the curve kPanCurve. The header points to kSamplesFolder. The
+// curve maps CC10 to the pan (value - 64) / 64. The MIDI writer uses the same convention.
+std::string ControlHeader();
+
+// Returns the <global> header of a track file and its opcodes for a bend range of `bend_range` semitones: bend_up and
+// bend_down in cents, then the pan from CC10 and the amplitude from CC7 and CC11, without smoothing. `bend_range` must
+// be positive. sfzformat.com limits bend_up and bend_down to 96 semitones.
+std::string GlobalHeader(int bend_range);
+
 // The text that the hook adds to a track's file.
 struct TrackText
 {

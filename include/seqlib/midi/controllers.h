@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-// MIDI controller numbers: the controllers that the MIDI file builder and the performance writer send.
+// MIDI controller numbers: the controllers that the MIDI file builder and the performance writer send, and others that
+// a reader of MIDI files may look for.
 
 #pragma once
 
@@ -9,14 +10,26 @@ namespace seqlib::midi::cc
 
 constexpr int kBankSelect = 0;
 constexpr int kModulation = 1;
+constexpr int kPortamentoTime = 5;
 constexpr int kDataEntry = 6;
 constexpr int kVolume = 7;
 constexpr int kPan = 10;
 constexpr int kExpression = 11;
 constexpr int kBankSelectLsb = 32;
 constexpr int kDataEntryLsb = 38;
+constexpr int kVolumeLsb = 39;
+constexpr int kPanLsb = 42;
+constexpr int kSustain = 64;
+constexpr int kPortamento = 65;
+constexpr int kReleaseTime = 72;
+constexpr int kAttackTime = 73;
+constexpr int kBrightness = 74;
+constexpr int kDecayTime = 75;
+constexpr int kPortamentoControl = 84;
 constexpr int kReverb = 91;
 constexpr int kChorus = 93;
+constexpr int kNrpnLsb = 98;
+constexpr int kNrpnMsb = 99;
 constexpr int kRpnLsb = 100;
 constexpr int kRpnMsb = 101;
 
@@ -24,5 +37,10 @@ constexpr int kRpnMsb = 101;
 constexpr int kLoopStart = 111;
 
 constexpr int kAllSoundOff = 120;
+constexpr int kMonoOn = 126;
+constexpr int kPolyOn = 127;
+
+// The null RPN: this value in both RPN controllers selects no parameter.
+constexpr int kNullRpn = 127;
 
 } // namespace seqlib::midi::cc

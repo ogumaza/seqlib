@@ -9,13 +9,15 @@ seqlib depends on nothing but the C++ standard library.
 ## What it does
 
 - **MIDI encoding** (`seqlib/midi/encoder.h`): variable-length quantities, header and track chunks, and a track
-  encoder for events in time order. A gap too long for one delta time is split with empty text events.
+  encoder for events in time order. A gap too long for one delta time is split with empty text events. The namespaces
+  `status` and `meta` name the status bytes and the types of meta events.
 - **Performance to MIDI** (`seqlib/midi/performance.h`, `seqlib/midi/performance_writer.h`): `WriteMidi` writes a
   format 1 file from a `Performance` of up to 16 tracks. It gives each track a MIDI channel, and puts notes with other
   settings on another part with another channel. Overlapping notes of one key go on extra channels (layers)
   while channels last. General MIDI's drum channel is used last. `WriteMidi` sets each track's pitch bend range to the
   largest bend that the track plays. It writes loop markers (`loopStart` and `loopEnd`, and CC111 at the loop's start).
-  Events can be timed to a player's frames, between the sequence's ticks.
+  Events can be timed to a player's frames, between the sequence's ticks. `kTracks`, `kKeys` and `kProgramsPerBank`
+  give the number of tracks, of keys and of programs in a bank.
 - **Recording a performance** (`seqlib/midi/recorder.h`): a `Recorder` that puts a sequence player's notes, settings,
   presets, pitch and tempo on a `Performance`'s tracks, at the sequence's ticks and between them. A setting goes before
   the note-ons at the end of its tick. Only a change goes out. A track can switch its new notes to another part. Options
@@ -35,12 +37,14 @@ seqlib depends on nothing but the C++ standard library.
 - **SoundFont samples** (`seqlib/sf2/samples.h`): the samples that a prepared wave becomes, mono or a linked stereo
   pair, with loop points.
 - **SoundFont units** (`seqlib/sf2/units.h`): timecents, an LFO's frequency in absolute cents, a square-root pan law
-  converted to SoundFont's pan law, and an attenuation in the form that a zone holds it.
+  converted to SoundFont's pan law, and an attenuation in the form that a zone holds it. `AbsoluteCents` converts a
+  frequency to absolute cents without the limits of the LFO generators.
 - **SFZ text** (`seqlib/sfz/text.h`): numbers, controller curves and comments.
 - **SFZ opcodes** (`seqlib/sfz/opcodes.h`): a region's tuning, amplitude envelope and loop.
 - **SFZ track files** (`seqlib/sfz/track_file.h`): a sequence's SFZ files, one for each track that has a MIDI channel.
   `TrackFiles` writes the parts of each file that don't depend on the instrument model, such as the pan curve. A hook
-  adds the rest: other controller curves, opcodes and each preset's regions.
+  adds the rest: other controller curves, opcodes and each preset's regions. A program that writes track files itself
+  can use `ControlHeader` and `GlobalHeader` for the `<control>` and `<global>` headers.
 - **PCM** (`seqlib/pcm.h`): 16-bit channels of the same length, with a loop. The WAV writer and reader and the loop
   functions use it.
 - **WAV files** (`seqlib/wav.h`): a writer of 16-bit PCM with any number of channels, and a loop in a `smpl` chunk.
@@ -137,6 +141,8 @@ contraction. Link `seqlib::reproducible_fp` to build your sources the same way.
 `seqlib::testing` holds the checks that the unit tests of seqlib and of programs that use seqlib share. Its header is
 `seqlib/testing/check.h`. A failed check is reported and counted. The test goes on after it. A failed `SEQLIB_REQUIRE`
 or `SEQLIB_REQUIRE_EQ` returns from the function that contains it instead. Link `seqlib::testing` to your tests only.
+`Capture` runs a function with the state of the checks set aside, and returns what the checks wrote and counted. A test
+of a runner built on the checks can use it.
 
 A small example:
 

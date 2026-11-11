@@ -50,7 +50,7 @@ void AppendTrack(std::vector<uint8_t>& out, std::span<const uint8_t> body)
 
 std::vector<uint8_t> MetaEvent(uint8_t type, const std::string& text)
 {
-    std::vector<uint8_t> bytes = {0xff, type};
+    std::vector<uint8_t> bytes = {status::kMeta, type};
     AppendVlq(bytes, static_cast<uint32_t>(text.size()));
     bytes.insert(bytes.end(), text.begin(), text.end());
 
@@ -59,14 +59,17 @@ std::vector<uint8_t> MetaEvent(uint8_t type, const std::string& text)
 
 std::vector<uint8_t> TempoEvent(uint32_t micros_per_quarter)
 {
-    const uint32_t us = micros_per_quarter;
-    return {0xff, 0x51, 0x03, static_cast<uint8_t>(us >> 16), static_cast<uint8_t>(us >> 8), static_cast<uint8_t>(us)};
+    return {status::kMeta,
+            meta::kTempo,
+            0x03,
+            static_cast<uint8_t>(micros_per_quarter >> 16),
+            static_cast<uint8_t>(micros_per_quarter >> 8),
+            static_cast<uint8_t>(micros_per_quarter)};
 }
 
 void TrackEncoder::Event(uint64_t tick, std::initializer_list<uint8_t> bytes)
 {
-    Delta(tick);
-    data_.insert(data_.end(), bytes.begin(), bytes.end());
+    Event(tick, std::span<const uint8_t>(bytes.begin(), bytes.size()));
 }
 
 void TrackEncoder::Event(uint64_t tick, std::span<const uint8_t> bytes)
@@ -82,13 +85,14 @@ void TrackEncoder::Meta(uint64_t tick, uint8_t type, const std::string& text)
 
 void TrackEncoder::Tempo(uint64_t tick, double bpm)
 {
-    const uint32_t us = static_cast<uint32_t>(std::llround(std::clamp(60000000.0 / bpm, 1.0, 16777215.0)));
+    const uint32_t us =
+        static_cast<uint32_t>(std::llround(std::clamp(60000000.0 / bpm, 1.0, double{meta::kMaxMicrosPerQuarter})));
     Event(tick, TempoEvent(us));
 }
 
 void TrackEncoder::End(uint64_t tick)
 {
-    Event(tick, {0xff, 0x2f, 0x00});
+    Event(tick, {status::kMeta, meta::kEndOfTrack, 0x00});
 }
 
 const std::vector<uint8_t>& TrackEncoder::Data() const
@@ -108,7 +112,7 @@ void TrackEncoder::Delta(uint64_t tick)
     while (delta > kMaxDelta)
     {
         AppendVlq(data_, kMaxDelta);
-        data_.insert(data_.end(), {0xff, 0x01, 0x00});
+        data_.insert(data_.end(), {status::kMeta, meta::kText, 0x00});
         delta -= kMaxDelta;
     }
 

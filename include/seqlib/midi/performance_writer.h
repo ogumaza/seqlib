@@ -18,10 +18,10 @@ namespace seqlib::midi
 // MIDI channel allocation, bend ranges and conversion warnings.
 struct MidiReport
 {
-    int channels = 0;                      // MIDI channels used
-    std::array<int, 16> bend_ranges{};     // each track's pitch bend range (RPN 0), in semitones
-    uint32_t cut_notes = 0;                // overlapping notes cut short for lack of channels
-    std::set<uint32_t> channel_10_presets; // presets that MIDI channel 10 plays
+    int channels = 0;                       // MIDI channels used
+    std::array<int, kTracks> bend_ranges{}; // each track's pitch bend range (RPN 0), in semitones
+    uint32_t cut_notes = 0;                 // overlapping notes cut short for lack of channels
+    std::set<uint32_t> channel_10_presets;  // presets that MIDI channel 10 plays
     std::vector<std::string> warnings;
 };
 
@@ -56,6 +56,10 @@ struct MidiOptions
 // with matching controllers, up to the 16-channel limit. Allocates in track order, and uses channel 10 (index 9,
 // General MIDI drums) last. Synths use bank 128 for that channel regardless of bank select. Records channel 10's
 // presets in `report`. sf2::AddChannel10Copy then copies each of them to that bank.
+//
+// A player that jumps back to the loopStart marker keeps the tempo that it was playing. Every pass of the loop starts
+// at the right tempo only when `perf.tempo` has a change at the start tick of the loop. WriteMidi writes that change
+// after the loopStart marker and CC111. It adds no such change itself.
 std::vector<uint8_t> WriteMidi(const Performance& perf, const std::string& title, MidiReport& report,
                                const MidiOptions& options = {});
 

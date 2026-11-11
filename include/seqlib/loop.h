@@ -26,8 +26,8 @@ struct PreparedWave
 // length.
 PreparedWave UnrollLoop(const Pcm& pcm, uint32_t min_start, uint32_t min_before, uint32_t min_length, uint32_t after);
 
-// Repeats loop data to meet SoundFont requirements: 8 samples before the loop, at least 32 within it and 32 after it.
-// Playback is unchanged.
+// Repeats loop data to meet SoundFont requirements: 8 samples before the loop, at least 32 within it and 8 after it.
+// Appends 32 samples from the loop start for interpolation. Playback is unchanged.
 PreparedWave PrepareForSoundFont(const Pcm& pcm);
 
 // Prepares samples for sfizz. The loop crossfade in sfizz spans at least 1 ms and blends the loop end with data before

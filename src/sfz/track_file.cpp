@@ -6,6 +6,7 @@
 
 #include <set>
 
+#include "midi/track_name.h"
 #include "seqlib/file_name.h"
 #include "seqlib/sfz/text.h"
 
@@ -14,14 +15,10 @@ namespace seqlib::sfz
 namespace
 {
 
-// Custom curve IDs; sfizz reserves 0-6. The hook's curves come after this one.
-constexpr int kPanCurve = 7; // CC10 to pan
-
 // The name of track `t`: the MIDI track's name with `track_names`, where it has one, and otherwise "Track <t>".
 std::string TrackName(const midi::Performance& perf, int t, bool track_names)
 {
-    const std::string& name = perf.track_names[static_cast<std::size_t>(t)];
-    return track_names && !name.empty() ? name : "Track " + std::to_string(t);
+    return track_names ? detail::TrackName(perf, t) : detail::DefaultTrackName(t);
 }
 
 // Writes track `t`'s SFZ file.
@@ -46,31 +43,20 @@ std::string TrackFile(const midi::Performance& perf, int t, int bend_range, cons
              " dB. Region volumes restore that gain.\n";
     }
     s += "\n";
-    s += "<control>\ndefault_path=../" + kSamplesFolder + "/\nhint_ram_based=1\n\n";
-
-    // Map CC10 to (value - 64) / 64. That's the SoundFont pan convention that the MIDI writer uses.
-    s += Curve(kPanCurve, "CC10 to pan", [](int v) { return (v - 64) / 64.0; });
+    s += ControlHeader();
     s += text.curves;
-
-    const std::string bend = std::to_string(bend_range * 100);
-    s += "<global>\nbend_up=" + bend + " bend_down=-" + bend + "\n";
-
-    // CC7, CC10 and CC11 take effect at once. sfizz would otherwise smooth them over 10 ms, from CC7 100 at first. A
-    // note whose track sets its volume or pan in the tick the note starts would then begin at the old value. Curve 4
-    // squares CC7 and CC11: General MIDI's volume curve, 40 log10(value / 127) dB.
-    s += "pan_oncc10=100 pan_curvecc10=" + std::to_string(kPanCurve) + " pan_smoothcc10=0\n";
-    s += "amplitude_oncc7=100 amplitude_curvecc7=4 amplitude_smoothcc7=0 amplitude_oncc11=100 amplitude_curvecc11=4 "
-         "amplitude_smoothcc11=0\n";
+    s += GlobalHeader(bend_range);
     s += text.global;
 
-    const bool banks_selected = options.presets > 128;
+    const bool banks_selected = options.presets > midi::kProgramsPerBank;
     for (uint32_t p : presets)
     {
-        s += "\n// " + CommentText(options.preset_names[p]) + "\n<master> loprog=" + std::to_string(p % 128) +
-             " hiprog=" + std::to_string(p % 128);
+        const std::string program = std::to_string(p % midi::kProgramsPerBank);
+        s += "\n// " + CommentText(options.preset_names[p]) + "\n<master> loprog=" + program + " hiprog=" + program;
         if (banks_selected)
         {
-            s += " locc0=" + std::to_string(p / 128) + " hicc0=" + std::to_string(p / 128);
+            const std::string bank = std::to_string(p / midi::kProgramsPerBank);
+            s += " locc0=" + bank + " hicc0=" + bank;
         }
         s += "\n" + text.preset(p);
     }
@@ -80,11 +66,36 @@ std::string TrackFile(const midi::Performance& perf, int t, int bend_range, cons
 
 } // namespace
 
+std::string ControlHeader()
+{
+    std::string s = "<control>\ndefault_path=../" + kSamplesFolder + "/\nhint_ram_based=1\n\n";
+
+    // Map CC10 to (value - 64) / 64. That's the SoundFont pan convention that the MIDI writer uses.
+    s += Curve(kPanCurve, "CC10 to pan", [](int v) { return (v - 64) / 64.0; });
+
+    return s;
+}
+
+std::string GlobalHeader(int bend_range)
+{
+    const std::string bend = std::to_string(bend_range * 100);
+    std::string s = "<global>\nbend_up=" + bend + " bend_down=-" + bend + "\n";
+
+    // CC7, CC10 and CC11 take effect at once. sfizz would otherwise smooth them over 10 ms, from CC7 100 at first. A
+    // note whose track sets its volume or pan in the tick the note starts would then begin at the old value. Curve 4
+    // squares CC7 and CC11: General MIDI's volume curve, 40 log10(value / 127) dB.
+    s += "pan_oncc10=100 pan_curvecc10=" + std::to_string(kPanCurve) + " pan_smoothcc10=0\n";
+    s += "amplitude_oncc7=100 amplitude_curvecc7=4 amplitude_smoothcc7=0 amplitude_oncc11=100 amplitude_curvecc11=4 "
+         "amplitude_smoothcc11=0\n";
+
+    return s;
+}
+
 std::vector<File> TrackFiles(const midi::Performance& perf, const midi::MidiReport& midi,
                              const TrackFileOptions& options, const TrackTextFunction& text)
 {
     std::vector<File> files;
-    for (int t = 0; t < 16; t++)
+    for (int t = 0; t < midi::kTracks; t++)
     {
         const int bend_range = midi.bend_ranges[static_cast<std::size_t>(t)];
         if (bend_range == 0)

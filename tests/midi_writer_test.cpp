@@ -43,9 +43,9 @@ SEQLIB_TEST(midi_writer, VlqUsesSevenBitsAByte)
 SEQLIB_TEST(midi_writer, HeaderAndTrackChunks)
 {
     std::vector<uint8_t> out;
+    const std::vector<uint8_t> kBody = {0x00, 0xff, 0x2f, 0x00};
 
     midi::AppendHeader(out, 1, 3, 480);
-    const std::vector<uint8_t> kBody = {0x00, 0xff, 0x2f, 0x00};
     midi::AppendTrack(out, kBody);
 
     const std::vector<uint8_t> kExpected = {'M',  'T', 'h', 'd', 0,   0, 0, 6, 0, 1,    0,    3,    0x01,
@@ -110,8 +110,8 @@ SEQLIB_TEST(midi_writer, ControlKindsSortAfterTheNamedKinds)
 }
 
 // Writes each case with `timing` and compares the file and the report with the ones in `folder`. A case with no file
-// there is skipped.
-void CheckCasesAgainstFiles(midi::FrameTiming timing, const std::string& folder)
+// there is skipped. `files` is the number of cases that `folder` has files for.
+void CheckCasesAgainstFiles(midi::FrameTiming timing, const std::string& folder, int files)
 {
     int compared = 0;
     for (const MidiCase& c : MidiWriterCases())
@@ -128,26 +128,28 @@ void CheckCasesAgainstFiles(midi::FrameTiming timing, const std::string& folder)
 
         const std::vector<uint8_t> written = midi::WriteMidi(c.perf, "Test " + c.name, report, options);
 
-        SetContext("case " + c.name + " in " + folder);
+        seqlib::testing::SetContext("case " + c.name + " in " + folder);
         SEQLIB_CHECK(written == expected);
         const std::string text = ReportText(report);
         SEQLIB_CHECK(std::vector<uint8_t>(text.begin(), text.end()) == expected_report);
         compared++;
     }
 
-    SetContext("");
+    seqlib::testing::SetContext("");
 
-    SEQLIB_CHECK(compared > 0);
+    SEQLIB_CHECK_EQ(compared, files);
 }
 
+// Every case has files in not_after_tick.
 SEQLIB_TEST(midi_writer, WriterMatchesFilesWithFramesNotAfterTicks)
 {
-    CheckCasesAgainstFiles(midi::FrameTiming::kNotAfterTick, "not_after_tick");
+    CheckCasesAgainstFiles(midi::FrameTiming::kNotAfterTick, "not_after_tick", 8);
 }
 
+// Every case but `names` has files in frame_start.
 SEQLIB_TEST(midi_writer, WriterMatchesFilesWithFramesAtTheirStart)
 {
-    CheckCasesAgainstFiles(midi::FrameTiming::kFrameStart, "frame_start");
+    CheckCasesAgainstFiles(midi::FrameTiming::kFrameStart, "frame_start", 7);
 }
 
 SEQLIB_TEST(midi_writer, NoteCountCountsNoteOns)
@@ -179,6 +181,25 @@ midi::Performance OneNotePerTrack(int tracks)
     return perf;
 }
 
+// A performance written as MIDI and read back: the file, the writer's report, and the MIDI ticks in a tick of the
+// performance.
+struct Written
+{
+    midi::File file;
+    midi::MidiReport report;
+    uint64_t scale = 0;
+};
+
+// Writes `perf` with `options`, and reads the file back.
+Written WriteAndRead(const midi::Performance& perf, const midi::MidiOptions& options = {})
+{
+    Written written;
+    written.file = midi::Read(midi::WriteMidi(perf, "Test", written.report, options));
+    written.scale = written.file.division / perf.timebase;
+
+    return written;
+}
+
 SEQLIB_TEST(midi_writer, PartWithoutNotesSendsNothing)
 {
     // Track 0's second part plays no note. On the first part's channel, the second part's settings would change the
@@ -201,6 +222,24 @@ SEQLIB_TEST(midi_writer, PartWithoutNotesSendsNothing)
     SEQLIB_CHECK(written == expected);
 }
 
+// The drum channel, channel 10 by General MIDI, goes to the sixteenth track and no earlier one.
+SEQLIB_TEST(midi_writer, DrumChannelGoesLast)
+{
+    const midi::Performance fifteen = OneNotePerTrack(15);
+    const midi::Performance sixteen = OneNotePerTrack(16);
+
+    const std::vector<midi::Note> fifteen_notes = midi::Notes(WriteAndRead(fifteen).file);
+    const std::vector<midi::Note> sixteen_notes = midi::Notes(WriteAndRead(sixteen).file);
+
+    const auto on_drums = [](const midi::Note& n)
+    {
+        return n.channel == midi::kDrumChannel;
+    };
+    SEQLIB_CHECK(midi::kDrumChannel == 9);
+    SEQLIB_CHECK(std::ranges::none_of(fifteen_notes, on_drums));
+    SEQLIB_CHECK(std::ranges::count_if(sixteen_notes, on_drums) == 1);
+}
+
 SEQLIB_TEST(midi_writer, PartWithoutAChannelPlaysOnTheFirstPart)
 {
     // Sixteen tracks take every channel, and the last track gets the drum channel. Track 0's second part plays a note
@@ -215,11 +254,12 @@ SEQLIB_TEST(midi_writer, PartWithoutAChannelPlaysOnTheFirstPart)
     perf.tracks[0].insert(perf.tracks[0].begin() + 2, kSecondPart.begin(), kSecondPart.end());
     perf.tracks[15].insert(perf.tracks[15].begin() + 2,
                            {.tick = 48, .kind = EventKind::kPreset, .preset = 77, .part = 1});
-    midi::MidiReport report;
 
-    const midi::File file = midi::Read(midi::WriteMidi(perf, "Test", report));
+    const Written written = WriteAndRead(perf);
 
-    const uint64_t scale = file.division / perf.timebase;
+    const midi::File& file = written.file;
+    const midi::MidiReport& report = written.report;
+    const uint64_t scale = written.scale;
     const std::vector<midi::Event> controllers = file.Find(0xb0);
     const midi::Event volume = {48 * scale, {0xb0, 7, 40}};
     SEQLIB_CHECK(std::find(controllers.begin(), controllers.end(), volume) != controllers.end());
@@ -240,18 +280,21 @@ SEQLIB_TEST(midi_writer, TempoOnTheLoopsFirstTickFollowsItsMarkers)
     // loop's first tick comes after both. Otherwise the player would skip it on the next pass.
     for (const uint32_t start : {0u, 96u})
     {
-        SetContext("a loop from tick " + std::to_string(start));
+        seqlib::testing::SetContext("a loop from tick " + std::to_string(start));
         midi::Performance perf = OneNotePerTrack(1);
         perf.tempo = {{0, 120.0}, {96, 140.0}, {150, 90.0}};
         perf.loop = midi::Performance::Loop{start, 192};
-        midi::MidiReport report;
 
-        const midi::File file = midi::Read(midi::WriteMidi(perf, "Test", report));
+        const Written written = WriteAndRead(perf);
 
-        SEQLIB_REQUIRE(!file.tracks.empty());
-        const uint64_t scale = file.division / perf.timebase;
+        if (!seqlib::testing::Check(!written.file.tracks.empty(), "the file has tracks"))
+        {
+            continue;
+        }
+
+        const uint64_t scale = written.scale;
         std::vector<std::string> order;
-        for (const midi::Event& e : file.tracks[0].events)
+        for (const midi::Event& e : written.file.tracks[0].events)
         {
             if (e.tick != start * scale || e.bytes.size() < 2)
             {
@@ -285,8 +328,8 @@ SEQLIB_TEST(midi_writer, EventsBeforeAMarkerStayBeforeIt)
     // markers' ticks stay there.
     for (const midi::FrameTiming timing : {midi::FrameTiming::kNotAfterTick, midi::FrameTiming::kFrameStart})
     {
-        SetContext(timing == midi::FrameTiming::kNotAfterTick ? "frames not after their ticks"
-                                                              : "frames at their start");
+        seqlib::testing::SetContext(timing == midi::FrameTiming::kNotAfterTick ? "frames not after their ticks"
+                                                                               : "frames at their start");
         midi::Performance perf;
         perf.timebase = 48;
         perf.tempo.push_back({0, 120.0});
@@ -300,13 +343,16 @@ SEQLIB_TEST(midi_writer, EventsBeforeAMarkerStayBeforeIt)
         };
         perf.end_tick = 96;
         perf.loop = midi::Performance::Loop{24, 72};
-        midi::MidiReport report;
 
-        const midi::File file = midi::Read(midi::WriteMidi(perf, "Test", report, {timing}));
+        const Written written = WriteAndRead(perf, {timing});
 
-        const uint64_t scale = file.division / perf.timebase;
-        const std::vector<midi::Note> notes = midi::Notes(file);
-        SEQLIB_REQUIRE_EQ(notes.size(), 3);
+        const uint64_t scale = written.scale;
+        const std::vector<midi::Note> notes = midi::Notes(written.file);
+        if (!seqlib::testing::Check(notes.size() == 3, "3 notes, not " + std::to_string(notes.size())))
+        {
+            continue;
+        }
+
         SEQLIB_CHECK_EQ(notes[0].off, 24 * scale - 1);
         SEQLIB_CHECK_EQ(notes[1].on, 24 * scale);
         SEQLIB_CHECK_EQ(notes[1].off, 72 * scale - 1);

@@ -2,7 +2,7 @@
 
 cmake_minimum_required(VERSION 3.20)
 
-project(seqlib VERSION 1.3.0 DESCRIPTION "MIDI, SoundFont 2 and SFZ files" LANGUAGES CXX)
+project(seqlib VERSION 1.4.0 DESCRIPTION "MIDI, SoundFont 2 and SFZ files" LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
@@ -75,7 +75,7 @@ add_library(seqlib::seqlib ALIAS seqlib)
 target_include_directories(seqlib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-# The private header, bytes.h, is in src.
+# The private headers, such as bytes.h, are in src.
 target_include_directories(seqlib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_features(seqlib PUBLIC cxx_std_20)
 seqlib_set_flags(seqlib)

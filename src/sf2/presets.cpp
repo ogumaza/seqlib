@@ -6,6 +6,7 @@
 
 #include <map>
 
+#include "seqlib/midi/performance.h"
 #include "seqlib/sf2/units.h"
 
 namespace seqlib::sf2
@@ -108,6 +109,18 @@ Zone RegionZone(const ZoneValues& values)
     return z;
 }
 
+void AddGenerators(Zone& zone, std::span<const Generator> generators)
+{
+    const auto at = zone.generators.empty() ? zone.generators.end() : zone.generators.end() - 1;
+    zone.generators.insert(at, generators.begin(), generators.end());
+}
+
+void AddGenerator(Zone& zone, uint16_t oper, int value)
+{
+    const Generator generator = Generator::Value(oper, value);
+    AddGenerators(zone, {&generator, 1});
+}
+
 void AddInstrumentPreset(SoundFont& sf, uint32_t index, const std::string& name, Instrument instrument)
 {
     const auto instrument_index = static_cast<uint16_t>(sf.instruments.size());
@@ -115,8 +128,8 @@ void AddInstrumentPreset(SoundFont& sf, uint32_t index, const std::string& name,
 
     Preset preset;
     preset.name = name;
-    preset.bank = static_cast<uint16_t>(index / 128);
-    preset.program = static_cast<uint16_t>(index % 128);
+    preset.bank = static_cast<uint16_t>(index / midi::kProgramsPerBank);
+    preset.program = static_cast<uint16_t>(index % midi::kProgramsPerBank);
     Zone z;
     z.generators.push_back(Generator::Value(kInstrument, instrument_index));
     preset.zones.push_back(std::move(z));

@@ -10,9 +10,6 @@
 namespace seqlib::test
 {
 
-// The tests call the shared checks' SetContext (seqlib/testing/check.h) by this name.
-using seqlib::testing::SetContext;
-
 using TestFunction = void (*)();
 
 // Registers `function` as test `name` of `module`. Returns true, for a variable at namespace scope to hold.

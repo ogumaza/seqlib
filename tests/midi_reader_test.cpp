@@ -2,12 +2,12 @@
 
 // Tests of seqlib/midi/reader.h, on files built here.
 
-#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "helpers.h"
 #include "seqlib/midi/reader.h"
 #include "seqlib/read_error.h"
 #include "test.h"
@@ -16,7 +16,11 @@ namespace
 {
 
 using seqlib::ReadError;
+using seqlib::test::HasProblem;
 namespace midi = seqlib::midi;
+
+// A track whose first delta time has five bytes. A variable-length quantity has at most four.
+const std::vector<uint8_t> kLongDelta = {0x81, 0x81, 0x81, 0x81, 0x00, 0xff, 0x2f, 0x00};
 
 // Returns a file of format 1 whose track chunks hold `tracks`, timed in 1/480 of a quarter note.
 std::vector<uint8_t> MidiFile(const std::vector<std::vector<uint8_t>>& tracks)
@@ -45,7 +49,7 @@ std::vector<uint8_t> LeadTrack()
             'o',  'p',  'S',  't',  'a',  'r',  't',  0x00, 0xff, 0x2f, 0x00};
 }
 
-// A written track: a note, its note-off, and the end.
+// A written track: its name "T", a note, its note-off, and the end.
 std::vector<uint8_t> WrittenTrack()
 {
     return {0x00, 0xff, 0x03, 0x01, 'T', 0x00, 0x90, 0x3c, 0x64, 0x60, 0x80, 0x3c, 0x40, 0x00, 0xff, 0x2f, 0x00};
@@ -64,15 +68,6 @@ std::optional<ReadError> ReadErrorOf(const std::vector<uint8_t>& data)
     }
 
     return std::nullopt;
-}
-
-bool HasProblem(const std::vector<std::string>& problems, const std::string& part)
-{
-    const auto has = [&part](const std::string& p)
-    {
-        return p.find(part) != std::string::npos;
-    };
-    return std::any_of(problems.begin(), problems.end(), has);
 }
 
 SEQLIB_TEST(midi_reader, ReadsEventsWithTheirTicks)
@@ -117,9 +112,11 @@ SEQLIB_TEST(midi_reader, FindsNamesMarkersAndBends)
     const std::vector<midi::Bend> bends = midi::Bends(file);
 
     SEQLIB_CHECK(names == std::vector<std::string>({"Lead", "T"}));
-    SEQLIB_CHECK(markers.size() == 1 && markers[0].tick == 224 && markers[0].text == "loopStart");
-    SEQLIB_CHECK(bends.size() == 1 && bends[0].track == 0 && bends[0].channel == 1);
-    SEQLIB_CHECK(bends.size() == 1 && bends[0].tick == 224 && bends[0].value == 8192);
+    SEQLIB_REQUIRE_EQ(markers.size(), 1);
+    SEQLIB_REQUIRE_EQ(bends.size(), 1);
+    SEQLIB_CHECK(markers[0].tick == 224 && markers[0].text == "loopStart");
+    SEQLIB_CHECK(bends[0].track == 0 && bends[0].channel == 1);
+    SEQLIB_CHECK(bends[0].tick == 224 && bends[0].value == 8192);
 }
 
 SEQLIB_TEST(midi_reader, FindsEventsInOrderOfTick)
@@ -131,20 +128,54 @@ SEQLIB_TEST(midi_reader, FindsEventsInOrderOfTick)
     const std::vector<midi::Event> found = file.Find(0xb0);
 
     SEQLIB_REQUIRE_EQ(found.size(), 3);
-    SEQLIB_CHECK(found[0].tick == 5 && found[0].bytes[2] == 0x32);
-    SEQLIB_CHECK(found[1].tick == 10 && found[1].bytes[2] == 0x64);
-    SEQLIB_CHECK(found[2].tick == 10 && found[2].bytes[2] == 0x40);
+    SEQLIB_CHECK(found[0].tick == 5 && found[0].bytes == std::vector<uint8_t>({0xb0, 0x07, 0x32}));
+    SEQLIB_CHECK(found[1].tick == 10 && found[1].bytes == std::vector<uint8_t>({0xb0, 0x07, 0x64}));
+    SEQLIB_CHECK(found[2].tick == 10 && found[2].bytes == std::vector<uint8_t>({0xb0, 0x0a, 0x40}));
+}
+
+// A meta event's data follows its type and its length, a variable-length quantity of one or more bytes.
+SEQLIB_TEST(midi_reader, MetaDataFollowsTheTypeAndLength)
+{
+    std::vector<uint8_t> long_text = {0x00, 0xff, 0x01, 0x81, 0x00};
+    long_text.insert(long_text.end(), 128, 'x');
+    long_text.insert(long_text.end(), {0x00, 0xff, 0x2f, 0x00});
+    const midi::File file = midi::Read(MidiFile({LeadTrack(), long_text}));
+
+    const std::vector<uint8_t> name = midi::MetaData(file.tracks[0].events[0]);
+    const std::vector<uint8_t> text = midi::MetaData(file.tracks[1].events[0]);
+    const std::vector<uint8_t> end = midi::MetaData(file.tracks[1].events[1]);
+    const std::vector<uint8_t> short_event = midi::MetaData({0, {0xff, 0x01}});
+
+    SEQLIB_CHECK(name == std::vector<uint8_t>({'L', 'e', 'a', 'd'}));
+    SEQLIB_CHECK(text == std::vector<uint8_t>(128, 'x'));
+    SEQLIB_CHECK(end.empty());
+    SEQLIB_CHECK(short_event.empty());
+}
+
+// Tempos come in order of tick, and a tempo event with other than three bytes of data is left out. A file's tempo
+// before its first tempo event is the Standard MIDI File specification's default, 120 beats a minute.
+SEQLIB_TEST(midi_reader, TemposComeInOrderOfTick)
+{
+    const std::vector<uint8_t> kFirst = {0x00, 0xff, 0x51, 0x03, 0x07, 0xa1, 0x20, 0x64, 0xff,
+                                         0x51, 0x03, 0x0f, 0x42, 0x40, 0x00, 0xff, 0x2f, 0x00};
+    const std::vector<uint8_t> kSecond = {0x32, 0xff, 0x51, 0x03, 0x06, 0x1a, 0x80, 0x0a, 0xff,
+                                          0x51, 0x02, 0x07, 0xa1, 0x00, 0xff, 0x2f, 0x00};
+    const midi::File file = midi::Read(MidiFile({kFirst, kSecond}));
+
+    const std::vector<midi::Tempo> tempos = midi::Tempos(file);
+
+    SEQLIB_CHECK(tempos == std::vector<midi::Tempo>({{0, 0, 500000}, {1, 50, 400000}, {0, 100, 1000000}}));
+    SEQLIB_CHECK(midi::kDefaultMicrosPerQuarter == 500000);
 }
 
 SEQLIB_TEST(midi_reader, ThrowsOnMalformedData)
 {
     std::vector<uint8_t> overrun = MidiFile({WrittenTrack()});
-    overrun[21] += 1;
-    const std::vector<uint8_t> kLongDelta = {0x81, 0x81, 0x81, 0x81, 0x00, 0xff, 0x2f, 0x00};
+    overrun[21] += 1; // the low byte of the track chunk's size
     const std::vector<uint8_t> kNoStatus = {0x00, 0x3c, 0x64, 0x00, 0xff, 0x2f, 0x00};
     const std::vector<uint8_t> kCutShort = {0x00, 0x90, 0x3c};
     std::vector<uint8_t> two_tracks = MidiFile({WrittenTrack()});
-    two_tracks[11] = 2;
+    two_tracks[11] = 2; // the low byte of the track count
 
     const std::optional<ReadError> header = ReadErrorOf({'M', 'T', 'h', 'd'});
     const std::optional<ReadError> chunk = ReadErrorOf(overrun);
@@ -176,12 +207,11 @@ SEQLIB_TEST(midi_reader, ListsProblems)
                                          0x3c, 0x40, 0x01, 0x80, 0x3c, 0x40, 0x00, 0xff, 0x2f, 0x00};
     const std::vector<uint8_t> kUnended = {0x00, 0x90, 0x3c, 0x64, 0x00, 0xff, 0x2f, 0x00};
     const std::vector<uint8_t> kNoEnd = {0x00, 0x90, 0x3c, 0x64, 0x01, 0x80, 0x3c, 0x40};
-    const std::vector<uint8_t> kLongDelta = {0x81, 0x81, 0x81, 0x81, 0x00, 0xff, 0x2f, 0x00};
     std::vector<uint8_t> trailing = MidiFile({WrittenTrack()});
     trailing.push_back(0);
     std::vector<uint8_t> long_header = MidiFile({WrittenTrack()});
-    long_header[7] = 8;
-    long_header.insert(long_header.begin() + 14, {0, 0});
+    long_header[7] = 8;                                   // the low byte of the header's size
+    long_header.insert(long_header.begin() + 14, {0, 0}); // two more bytes at the header's end
 
     const std::vector<std::string> running = midi::Problems(MidiFile({LeadTrack()}));
     const std::vector<std::string> overlapping = midi::Problems(MidiFile({kAgain}));

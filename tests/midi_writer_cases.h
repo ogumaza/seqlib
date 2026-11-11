@@ -106,6 +106,7 @@ inline MidiCase LayersCase()
     AddKey(c, 0, 100, midi::EventKind::kNoteOff, 60, 0, 1);
     AddKey(c, 0, 110, midi::EventKind::kNoteOff, 60, 0, 2);
     AddKey(c, 0, 120, midi::EventKind::kNoteOff, 60, 0, 3);
+
     for (int t = 1; t < 14; t++)
     {
         const uint8_t key = static_cast<uint8_t>(40 + t);
@@ -113,6 +114,7 @@ inline MidiCase LayersCase()
         AddNote(c, t, static_cast<uint32_t>(t * 8), static_cast<uint32_t>(t * 8 + 40), key, 100,
                 static_cast<uint32_t>(10 + t));
     }
+
     c.perf.end_tick = 384;
 
     return c;
@@ -233,7 +235,7 @@ inline MidiCase NamesCase()
     return c;
 }
 
-// Every case, in the order of their files.
+// Every case.
 inline std::vector<MidiCase> MidiWriterCases()
 {
     return {BasicCase(),     LayersCase(), BendsCase(),    LoopFramesCase(),

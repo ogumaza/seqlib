@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <optional>
 
 #include "seqlib/sf2/soundfont.h"
@@ -18,10 +19,18 @@ int ToTimecents(double ms, int lo, int hi);
 // Converts `ms` milliseconds to timecents, rounded to the nearest, with no limits. `ms` must be positive.
 int ToTimecents(double ms);
 
+// Converts a frequency of `hz` hertz to absolute cents, 1200 log2(hz / 8.176), rounded to the nearest, with no limits.
+// `hz` must be positive and finite.
+int AbsoluteCents(double hz);
+
 // Converts an LFO's frequency of `hz` hertz to the absolute cents of freqModLFO and freqVibLFO, 1200 log2(hz / 8.176),
 // rounded to the nearest and held to the generators' -16000..4500 (SoundFont 2.01, sections 8.1.2 and 8.1.3). `hz` must
 // be positive and finite.
 int LfoFrequency(double hz);
+
+// Converts `value` to the signed 16-bit amount of a generator or a modulator: rounded to the nearest and held to
+// -32768..32767. `value` must not be NaN.
+int16_t ToAmount(double value);
 
 // Converts pan `p` under a square-root pan law to the pan that gives the same left/right ratio under SoundFont's
 // sin/cos pan law. Both run from -1 (left) to 1 (right). A pan outside that range is held to it.

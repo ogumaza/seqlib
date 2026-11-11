@@ -11,10 +11,13 @@
 #include <string>
 #include <vector>
 
+#include "helpers.h"
 #include "test.h"
 
 namespace
 {
+
+using seqlib::test::Ramp;
 
 struct LoopCase
 {
@@ -23,17 +26,6 @@ struct LoopCase
     bool loop;
     uint32_t loop_start, loop_end;
 };
-
-std::vector<int16_t> Ramp(int n, int step, int offset)
-{
-    std::vector<int16_t> samples;
-    for (int i = 0; i < n; i++)
-    {
-        samples.push_back(static_cast<int16_t>(offset + i * step));
-    }
-
-    return samples;
-}
 
 // Loops shorter and longer than the minimums of PrepareForSoundFont (8 before, 32 long) and PrepareForSfz (64).
 std::vector<LoopCase> Cases()
@@ -219,15 +211,19 @@ const UnrollCase kUnrolled[] = {
     {"stereo, no loop", 0, 200, 10, 300, {false, 0, 0, {{5, 0x63fcc5209ba9e8a9ull}, {5, 0x757f8d232b90fd55ull}}}},
 };
 
+// The offset basis and the prime of the 64-bit FNV-1a hash.
+constexpr uint64_t kFnvOffsetBasis = 14695981039346656037ull;
+constexpr uint64_t kFnvPrime = 1099511628211ull;
+
 uint64_t Fnv1a(std::span<const int16_t> samples)
 {
-    uint64_t hash = 14695981039346656037ull;
+    uint64_t hash = kFnvOffsetBasis;
     for (int16_t v : samples)
     {
         for (int i = 0; i < 2; i++)
         {
             hash ^= static_cast<uint8_t>(static_cast<uint16_t>(v) >> (8 * i));
-            hash *= 1099511628211ull;
+            hash *= kFnvPrime;
         }
     }
 
@@ -245,17 +241,20 @@ seqlib::Pcm ToPcm(const LoopCase& c)
     return pcm;
 }
 
-const LoopCase& Find(const std::vector<LoopCase>& cases, const std::string& name)
+// Returns the case named `name`. Fails a check and returns null if there's none.
+const LoopCase* Find(const std::vector<LoopCase>& cases, const std::string& name)
 {
     for (const LoopCase& c : cases)
     {
         if (c.name == name)
         {
-            return c;
+            return &c;
         }
     }
 
-    return cases.front();
+    seqlib::testing::Check(false, "no loop case " + name);
+
+    return nullptr;
 }
 
 bool Matches(const seqlib::PreparedWave& w, const Expected& expected)
@@ -282,8 +281,14 @@ SEQLIB_TEST(loop, PreparedChannels)
     const std::vector<LoopCase> cases = Cases();
     for (const PrepareCase& c : kPrepared)
     {
-        const seqlib::Pcm pcm = ToPcm(Find(cases, c.name));
-        seqlib::test::SetContext(std::string(c.name) + (c.sfz ? ", sfz " + std::to_string(c.crossfade) : ", sf2"));
+        const LoopCase* input = Find(cases, c.name);
+        if (input == nullptr)
+        {
+            continue;
+        }
+
+        const seqlib::Pcm pcm = ToPcm(*input);
+        seqlib::testing::SetContext(std::string(c.name) + (c.sfz ? ", sfz " + std::to_string(c.crossfade) : ", sf2"));
         SEQLIB_CHECK(
             Matches(c.sfz ? seqlib::PrepareForSfz(pcm, c.crossfade) : seqlib::PrepareForSoundFont(pcm), c.expected));
     }
@@ -294,13 +299,19 @@ SEQLIB_TEST(loop, UnrolledLoops)
     const std::vector<LoopCase> cases = Cases();
     for (const UnrollCase& c : kUnrolled)
     {
-        const seqlib::Pcm pcm = ToPcm(Find(cases, c.name));
-        seqlib::test::SetContext(c.name);
+        const LoopCase* input = Find(cases, c.name);
+        if (input == nullptr)
+        {
+            continue;
+        }
+
+        const seqlib::Pcm pcm = ToPcm(*input);
+        seqlib::testing::SetContext(c.name);
         SEQLIB_CHECK(Matches(seqlib::UnrollLoop(pcm, c.min_start, c.min_before, c.min_length, c.after), c.expected));
     }
 }
 
-SEQLIB_TEST(loop, ShortLoopUnrollsAsExpected)
+SEQLIB_TEST(loop, ShortLoopUnrollsToTheMinimums)
 {
     seqlib::Pcm pcm;
     pcm.loop = true;

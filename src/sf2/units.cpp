@@ -39,9 +39,19 @@ int ToTimecents(double ms)
     return static_cast<int>(std::lround(1200.0 * std::log2(ms / 1000.0)));
 }
 
+int AbsoluteCents(double hz)
+{
+    return static_cast<int>(std::lround(1200.0 * std::log2(hz / 8.176)));
+}
+
 int LfoFrequency(double hz)
 {
-    return std::clamp(static_cast<int>(std::lround(1200.0 * std::log2(hz / 8.176))), -16000, 4500);
+    return std::clamp(AbsoluteCents(hz), -16000, 4500);
+}
+
+int16_t ToAmount(double value)
+{
+    return static_cast<int16_t>(std::clamp(std::lround(value), -32768L, 32767L));
 }
 
 double SoundFontPan(double p)

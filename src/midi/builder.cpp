@@ -7,12 +7,17 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
 
+#include "midi/note_event.h"
+#include "midi/rpn.h"
+#include "midi/values.h"
 #include "seqlib/midi/encoder.h"
 
 namespace seqlib::midi
@@ -20,9 +25,11 @@ namespace seqlib::midi
 namespace
 {
 
+using detail::kMaxDataByte;
+
 uint8_t Clamp7(int v)
 {
-    return static_cast<uint8_t>(std::clamp(v, 0, 127));
+    return static_cast<uint8_t>(std::clamp(v, 0, kMaxDataByte));
 }
 
 } // namespace
@@ -45,11 +52,12 @@ void LevelsToControllers(double left, double right, int& cc10, int& cc11)
     }
     else
     {
-        cc10 = std::clamp(static_cast<int>(std::lround(std::atan2(gr, gl) / (std::numbers::pi / 2) * 127)), 0, 127);
+        cc10 = std::clamp(static_cast<int>(std::lround(std::atan2(gr, gl) / (std::numbers::pi / 2) * kMaxDataByte)), 0,
+                          kMaxDataByte);
     }
 
     const double kLoudestCentred = std::sqrt(2.0) * 127.0 / 128.0; // amplitude of the loudest centred voice
-    cc11 = std::clamp(static_cast<int>(std::lround(127 * std::sqrt(amp / kLoudestCentred))), 0, 127);
+    cc11 = std::clamp(static_cast<int>(std::lround(kMaxDataByte * std::sqrt(amp / kLoudestCentred))), 0, kMaxDataByte);
 }
 
 void TrackBuilder::AddEvent(uint32_t tick, int order, std::vector<uint8_t> bytes, int step)
@@ -65,7 +73,7 @@ void TrackBuilder::Meta(uint32_t tick, uint8_t type, const std::string& text)
 
 void TrackBuilder::Tempo(uint32_t tick, uint32_t micros_per_quarter)
 {
-    AddEvent(tick, kMeta, TempoEvent(micros_per_quarter));
+    AddEvent(tick, kMeta, TempoEvent(std::min(micros_per_quarter, meta::kMaxMicrosPerQuarter)));
 }
 
 void TrackBuilder::RepeatTempo(uint32_t tick)
@@ -74,7 +82,7 @@ void TrackBuilder::RepeatTempo(uint32_t tick)
     const Event* last = nullptr;
     for (const Event& e : events_)
     {
-        const bool tempo = e.bytes.size() == 6 && e.bytes[0] == 0xFF && e.bytes[1] == 0x51;
+        const bool tempo = e.bytes.size() == 6 && e.bytes[0] == status::kMeta && e.bytes[1] == meta::kTempo;
         if (tempo && e.tick <= tick && (!last || e.tick >= last->tick))
         {
             last = &e;
@@ -90,19 +98,20 @@ void TrackBuilder::RepeatTempo(uint32_t tick)
 void TrackBuilder::TimeSignature(uint32_t tick, int numerator, int denominator_pow2)
 {
     AddEvent(tick, kMeta,
-             {0xFF, 0x58, 0x04, static_cast<uint8_t>(numerator), static_cast<uint8_t>(denominator_pow2), 24, 8});
+             {status::kMeta, meta::kTimeSignature, 0x04, static_cast<uint8_t>(numerator),
+              static_cast<uint8_t>(denominator_pow2), meta::kClocksPerClick, meta::kThirtySecondNotesPerQuarter});
 }
 
 void TrackBuilder::SysEx(uint32_t tick, const std::vector<uint8_t>& message)
 {
-    const bool framed = message.size() >= 2 && message.front() == 0xF0 && message.back() == 0xF7;
-    if (!framed || std::any_of(message.begin() + 1, message.end() - 1, [](uint8_t b) { return b > 127; }))
+    const bool framed = message.size() >= 2 && message.front() == status::kSysEx && message.back() == status::kSysExEnd;
+    if (!framed || std::any_of(message.begin() + 1, message.end() - 1, [](uint8_t b) { return b > kMaxDataByte; }))
     {
         throw std::invalid_argument("a system exclusive message runs from F0 to F7 with only data bytes between them");
     }
 
     // F0, the number of bytes after it as a variable-length quantity, then those bytes.
-    std::vector<uint8_t> bytes = {0xF0};
+    std::vector<uint8_t> bytes = {status::kSysEx};
     AppendVlq(bytes, static_cast<uint32_t>(message.size() - 1));
     bytes.insert(bytes.end(), message.begin() + 1, message.end());
     AddEvent(tick, kSysEx, std::move(bytes));
@@ -111,50 +120,51 @@ void TrackBuilder::SysEx(uint32_t tick, const std::vector<uint8_t>& message)
 void TrackBuilder::NoteOn(uint32_t tick, int ch, int key, int velocity, bool before_programs, int step)
 {
     AddEvent(tick, before_programs ? kNoteOnFirst : kNoteOn,
-             {static_cast<uint8_t>(0x90 | ch), Clamp7(key), std::max<uint8_t>(1, Clamp7(velocity))}, step);
+             {static_cast<uint8_t>(status::kNoteOn | ch), Clamp7(key), std::max<uint8_t>(1, Clamp7(velocity))}, step);
 }
 
 void TrackBuilder::NoteOff(uint32_t tick, int ch, int key)
 {
-    AddEvent(tick, kNoteOff, {static_cast<uint8_t>(0x80 | ch), Clamp7(key), 0});
+    AddEvent(tick, kNoteOff, {static_cast<uint8_t>(status::kNoteOff | ch), Clamp7(key), 0});
 }
 
 void TrackBuilder::KeyPressure(uint32_t tick, int ch, int key, int value, int step)
 {
-    AddEvent(tick, kKeyPressure, {static_cast<uint8_t>(0xA0 | ch), Clamp7(key), Clamp7(value)}, step);
+    AddEvent(tick, kKeyPressure, {static_cast<uint8_t>(status::kKeyPressure | ch), Clamp7(key), Clamp7(value)}, step);
 }
 
 void TrackBuilder::Control(uint32_t tick, int ch, int cc, int value)
 {
-    AddEvent(tick, kControl, {static_cast<uint8_t>(0xB0 | ch), static_cast<uint8_t>(cc & 0x7F), Clamp7(value)});
+    AddEvent(tick, kControl,
+             {static_cast<uint8_t>(status::kControl | ch), static_cast<uint8_t>(cc & 0x7F), Clamp7(value)});
 }
 
 void TrackBuilder::BendRange(uint32_t tick, int ch, int semitones)
 {
-    Control(tick, ch, cc::kRpnMsb, 0);
-    Control(tick, ch, cc::kRpnLsb, 0);
-    Control(tick, ch, cc::kDataEntry, semitones);
-    Control(tick, ch, cc::kDataEntryLsb, 0);
-    Control(tick, ch, cc::kRpnMsb, 127);
-    Control(tick, ch, cc::kRpnLsb, 127);
+    for (const auto& [controller, value] : detail::BendRangeControllers(Clamp7(semitones)))
+    {
+        Control(tick, ch, controller, value);
+    }
 }
 
 void TrackBuilder::Program(uint32_t tick, int ch, int program, int step)
 {
-    AddEvent(tick, kProgram, {static_cast<uint8_t>(0xC0 | ch), Clamp7(program)}, step);
+    AddEvent(tick, kProgram, {static_cast<uint8_t>(status::kProgram | ch), Clamp7(program)}, step);
 }
 
 void TrackBuilder::Bank(uint32_t tick, int ch, int bank, int step)
 {
-    AddEvent(tick, kBank, {static_cast<uint8_t>(0xB0 | ch), cc::kBankSelect, static_cast<uint8_t>(bank & 0x7F)}, step);
-    AddEvent(tick, kBank, {static_cast<uint8_t>(0xB0 | ch), cc::kBankSelectLsb, 0}, step);
+    const auto control = static_cast<uint8_t>(status::kControl | ch);
+    AddEvent(tick, kBank, {control, cc::kBankSelect, static_cast<uint8_t>(bank & 0x7F)}, step);
+    AddEvent(tick, kBank, {control, cc::kBankSelectLsb, 0}, step);
 }
 
 void TrackBuilder::PitchBend(uint32_t tick, int ch, int value)
 {
-    value = std::clamp(value, 0, 16383);
+    value = std::clamp(value, 0, detail::kPitchWheelMax);
     AddEvent(tick, kBend,
-             {static_cast<uint8_t>(0xE0 | ch), static_cast<uint8_t>(value & 0x7F), static_cast<uint8_t>(value >> 7)});
+             {static_cast<uint8_t>(status::kPitchBend | ch), static_cast<uint8_t>(value & 0x7F),
+              static_cast<uint8_t>(value >> 7)});
 }
 
 void TrackBuilder::Retime(const std::function<uint32_t(uint32_t)>& place)
@@ -170,15 +180,14 @@ void TrackBuilder::Retime(const std::function<uint32_t(uint32_t)>& place)
     std::vector<bool> left_out(events_.size());
     for (std::size_t i = 0; i < events_.size(); i++)
     {
-        const std::vector<uint8_t>& b = events_[i].bytes;
-        const int kind = b[0] & 0xF0;
-        if (kind != 0x80 && kind != 0x90)
+        const std::optional<detail::NoteEvent> note = detail::AsNoteEvent(events_[i].bytes);
+        if (!note)
         {
             continue;
         }
 
-        const std::pair<int, int> key = {b[0] & 0x0F, b[1]};
-        if (kind == 0x90 && b[2])
+        const std::pair<int, int> key = {note->channel, note->key};
+        if (note->on)
         {
             sounding[key] = i;
             continue;

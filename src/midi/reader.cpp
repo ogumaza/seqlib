@@ -9,9 +9,13 @@
 #include <cstring>
 #include <deque>
 #include <map>
+#include <optional>
 #include <utility>
 
 #include "bytes.h"
+#include "midi/note_event.h"
+#include "midi/values.h"
+#include "seqlib/midi/encoder.h"
 #include "seqlib/read_error.h"
 
 namespace seqlib::midi
@@ -19,8 +23,11 @@ namespace seqlib::midi
 namespace
 {
 
+using detail::AsNoteEvent;
+using detail::kMaxDataByte;
 using detail::LoadBe16;
 using detail::LoadBe32;
+using detail::NoteEvent;
 
 std::string TrackLabel(int track)
 {
@@ -52,10 +59,43 @@ uint32_t ReadVlq(std::span<const uint8_t> d, std::size_t& p, std::size_t end)
 }
 
 // Returns the number of data bytes that follow a channel message's status byte.
-std::size_t DataBytes(uint8_t status)
+std::size_t DataBytes(uint8_t status_byte)
 {
-    const int kind = status >> 4;
-    return kind == 0xc || kind == 0xd ? 1 : 2;
+    const int kind = status_byte & 0xF0;
+    return kind == status::kProgram || kind == status::kChannelPressure ? 1 : 2;
+}
+
+// What ReadTrack finds in a track that Problems() reports.
+struct TrackFindings
+{
+    std::size_t running_events = 0; // events written with running status
+    std::size_t first_running = 0;  // the byte of the first of them
+    std::size_t high_data = 0;      // data bytes above 127
+    bool ended = false;             // the track has an end-of-track event
+    bool after_end = false;         // an event follows the end-of-track event
+};
+
+// Adds a line to `problems` for each problem that `found` shows in track `index`.
+void AddTrackProblems(const TrackFindings& found, int index, std::vector<std::string>& problems)
+{
+    const std::string label = TrackLabel(index);
+    if (found.running_events != 0)
+    {
+        problems.push_back(label + ": running status in " + std::to_string(found.running_events) +
+                           " events, the first at byte " + std::to_string(found.first_running));
+    }
+    if (found.high_data != 0)
+    {
+        problems.push_back(label + ": " + std::to_string(found.high_data) + " data bytes above 127");
+    }
+    if (!found.ended)
+    {
+        problems.push_back(label + ": no end-of-track event");
+    }
+    else if (found.after_end)
+    {
+        problems.push_back(label + ": events after its end-of-track event");
+    }
 }
 
 // Reads the events of track chunk `index`. The chunk's data runs from `begin` to `end`. Adds a line to `problems`, if
@@ -66,8 +106,7 @@ Track ReadTrack(std::span<const uint8_t> d, std::size_t begin, std::size_t end, 
     Track track;
     uint64_t tick = 0;
     uint8_t running = 0; // the status that running status repeats, or 0 after a meta or system exclusive event
-    std::size_t first_running = 0, running_events = 0, high_data = 0;
-    bool ended = false, after_end = false;
+    TrackFindings found;
     std::size_t p = begin;
     while (p < end)
     {
@@ -77,34 +116,39 @@ Track ReadTrack(std::span<const uint8_t> d, std::size_t begin, std::size_t end, 
             throw ReadError(p, "event runs past the end of its track");
         }
 
-        after_end = after_end || ended;
+        found.after_end = found.after_end || found.ended;
         const std::size_t at = p;
-        uint8_t status = d[p];
-        if (status < 0x80)
+        uint8_t status_byte = d[p];
+        if (status_byte <= kMaxDataByte)
         {
             if (running == 0)
             {
                 throw ReadError(at, "running status with no status before it");
             }
 
-            first_running = running_events++ == 0 ? at : first_running;
-            status = running;
+            if (found.running_events == 0)
+            {
+                found.first_running = at;
+            }
+            found.running_events++;
+            status_byte = running;
         }
         else
         {
             p++;
         }
 
-        if (status == 0xff || status == 0xf0 || status == 0xf7)
+        if (status_byte == status::kMeta || status_byte == status::kSysEx || status_byte == status::kSysExEnd)
         {
             // A meta event has a type before its length. A meta or system exclusive event ends running status.
-            if (status == 0xff && p >= end)
+            const bool is_meta = status_byte == status::kMeta;
+            if (is_meta && p >= end)
             {
                 throw ReadError(at, "event runs past the end of its track");
             }
 
-            const bool end_of_track = status == 0xff && d[p] == 0x2f;
-            p += status == 0xff ? 1 : 0;
+            const bool end_of_track = is_meta && d[p] == meta::kEndOfTrack;
+            p += is_meta ? 1 : 0;
             const uint32_t length = ReadVlq(d, p, end);
             if (length > end - p)
             {
@@ -112,33 +156,33 @@ Track ReadTrack(std::span<const uint8_t> d, std::size_t begin, std::size_t end, 
             }
 
             p += length;
-            ended = ended || end_of_track;
+            found.ended = found.ended || end_of_track;
             running = 0;
         }
-        else if (status >= 0xf0)
+        else if (status_byte >= status::kSysEx)
         {
-            throw ReadError(at, "status byte " + std::to_string(status) + " can't be in a file");
+            throw ReadError(at, "status byte " + std::to_string(status_byte) + " can't be in a file");
         }
         else
         {
-            const std::size_t n = DataBytes(status);
+            const std::size_t n = DataBytes(status_byte);
             if (n > end - p)
             {
                 throw ReadError(at, "event runs past the end of its track");
             }
 
-            high_data += static_cast<std::size_t>(std::count_if(d.begin() + static_cast<std::ptrdiff_t>(p),
-                                                                d.begin() + static_cast<std::ptrdiff_t>(p + n),
-                                                                [](uint8_t b) { return b > 127; }));
+            found.high_data += static_cast<std::size_t>(std::count_if(d.begin() + static_cast<std::ptrdiff_t>(p),
+                                                                      d.begin() + static_cast<std::ptrdiff_t>(p + n),
+                                                                      [](uint8_t b) { return b > kMaxDataByte; }));
             p += n;
-            running = status;
+            running = status_byte;
         }
 
         Event e{tick, std::vector<uint8_t>(d.begin() + static_cast<std::ptrdiff_t>(at),
                                            d.begin() + static_cast<std::ptrdiff_t>(p))};
-        if (e.bytes[0] < 0x80)
+        if (e.bytes[0] <= kMaxDataByte)
         {
-            e.bytes.insert(e.bytes.begin(), status);
+            e.bytes.insert(e.bytes.begin(), status_byte);
         }
         track.events.push_back(std::move(e));
     }
@@ -146,24 +190,7 @@ Track ReadTrack(std::span<const uint8_t> d, std::size_t begin, std::size_t end, 
 
     if (problems != nullptr)
     {
-        const std::string label = TrackLabel(index);
-        if (running_events != 0)
-        {
-            problems->push_back(label + ": running status in " + std::to_string(running_events) +
-                                " events, the first at byte " + std::to_string(first_running));
-        }
-        if (high_data != 0)
-        {
-            problems->push_back(label + ": " + std::to_string(high_data) + " data bytes above 127");
-        }
-        if (!ended)
-        {
-            problems->push_back(label + ": no end-of-track event");
-        }
-        else if (after_end)
-        {
-            problems->push_back(label + ": events after its end-of-track event");
-        }
+        AddTrackProblems(found, index, *problems);
     }
 
     return track;
@@ -233,18 +260,14 @@ File Parse(std::span<const uint8_t> d, std::vector<std::string>* problems)
 // Returns the text of meta event `e`: the bytes after its type and length.
 std::string MetaText(const Event& e)
 {
-    std::size_t p = 2;
-    while (p < e.bytes.size() && (e.bytes[p] & 0x80))
-    {
-        p++;
-    }
+    const std::vector<uint8_t> data = MetaData(e);
 
-    return std::string(e.bytes.begin() + static_cast<std::ptrdiff_t>(std::min(p + 1, e.bytes.size())), e.bytes.end());
+    return std::string(data.begin(), data.end());
 }
 
 bool IsMeta(const Event& e, uint8_t type)
 {
-    return e.bytes.size() >= 2 && e.bytes[0] == 0xff && e.bytes[1] == type;
+    return e.bytes.size() >= 2 && e.bytes[0] == status::kMeta && e.bytes[1] == type;
 }
 
 } // namespace
@@ -277,6 +300,18 @@ File Read(std::span<const uint8_t> data)
     return Parse(data, nullptr);
 }
 
+std::vector<uint8_t> MetaData(const Event& event)
+{
+    std::size_t p = 2;
+    while (p < event.bytes.size() && (event.bytes[p] & 0x80))
+    {
+        p++;
+    }
+
+    return std::vector<uint8_t>(event.bytes.begin() + static_cast<std::ptrdiff_t>(std::min(p + 1, event.bytes.size())),
+                                event.bytes.end());
+}
+
 std::vector<Note> Notes(const File& file)
 {
     std::vector<Note> notes;
@@ -286,21 +321,21 @@ std::vector<Note> Notes(const File& file)
         std::map<std::pair<int, int>, std::deque<std::pair<uint64_t, int>>> sounding;
         for (const Event& e : file.tracks[t].events)
         {
-            const int kind = e.bytes[0] >> 4;
-            if (kind != 8 && kind != 9)
+            const std::optional<NoteEvent> note = AsNoteEvent(e.bytes);
+            if (!note)
             {
                 continue;
             }
 
-            const int channel = e.bytes[0] & 15, key = e.bytes[1], velocity = e.bytes[2];
-            std::deque<std::pair<uint64_t, int>>& on = sounding[{channel, key}];
-            if (kind == 9 && velocity > 0)
+            std::deque<std::pair<uint64_t, int>>& on = sounding[{note->channel, note->key}];
+            if (note->on)
             {
-                on.push_back({e.tick, velocity});
+                on.push_back({e.tick, note->velocity});
             }
             else if (!on.empty())
             {
-                notes.push_back({static_cast<int>(t), channel, key, on.front().second, on.front().first, e.tick});
+                notes.push_back(
+                    {static_cast<int>(t), note->channel, note->key, on.front().second, on.front().first, e.tick});
                 on.pop_front();
             }
         }
@@ -317,7 +352,7 @@ std::vector<std::string> TrackNames(const File& file)
         std::string name;
         for (const Event& e : t.events)
         {
-            if (IsMeta(e, 0x03))
+            if (IsMeta(e, meta::kTrackName))
             {
                 name = MetaText(e);
             }
@@ -335,7 +370,7 @@ std::vector<Text> Markers(const File& file)
     {
         for (const Event& e : t.events)
         {
-            if (IsMeta(e, 0x06))
+            if (IsMeta(e, meta::kMarker))
             {
                 markers.push_back({e.tick, MetaText(e)});
             }
@@ -352,14 +387,44 @@ std::vector<Bend> Bends(const File& file)
     {
         for (const Event& e : file.tracks[t].events)
         {
-            if (e.bytes[0] >> 4 == 0xe)
+            if ((e.bytes[0] & 0xF0) == status::kPitchBend)
             {
-                bends.push_back({static_cast<int>(t), e.bytes[0] & 15, e.tick, e.bytes[1] | e.bytes[2] << 7});
+                bends.push_back({static_cast<int>(t), e.bytes[0] & 0x0F, e.tick, e.bytes[1] | e.bytes[2] << 7});
             }
         }
     }
 
     return bends;
+}
+
+std::vector<Tempo> Tempos(const File& file)
+{
+    std::vector<Tempo> tempos;
+    for (std::size_t t = 0; t < file.tracks.size(); t++)
+    {
+        for (const Event& e : file.tracks[t].events)
+        {
+            if (!IsMeta(e, meta::kTempo))
+            {
+                continue;
+            }
+
+            const std::vector<uint8_t> data = MetaData(e);
+            if (data.size() == 3)
+            {
+                const uint32_t micros = uint32_t{data[0]} << 16 | uint32_t{data[1]} << 8 | data[2];
+                tempos.push_back({static_cast<int>(t), e.tick, micros});
+            }
+        }
+    }
+
+    const auto earlier = [](const Tempo& a, const Tempo& b)
+    {
+        return a.tick < b.tick;
+    };
+    std::stable_sort(tempos.begin(), tempos.end(), earlier);
+
+    return tempos;
 }
 
 std::vector<std::string> Problems(std::span<const uint8_t> data)
@@ -383,23 +448,23 @@ std::vector<std::string> Problems(std::span<const uint8_t> data)
         std::map<std::pair<int, int>, uint64_t> sounding;
         for (const Event& e : file.tracks[t].events)
         {
-            const int kind = e.bytes[0] >> 4;
-            if (kind != 8 && kind != 9)
+            const std::optional<NoteEvent> note = AsNoteEvent(e.bytes);
+            if (!note)
             {
                 continue;
             }
 
-            const int channel = e.bytes[0] & 15, key = e.bytes[1];
-            const auto it = sounding.find({channel, key});
-            if (kind == 9 && e.bytes[2] > 0)
+            const std::pair<int, int> channel_and_key = {note->channel, note->key};
+            const auto it = sounding.find(channel_and_key);
+            if (note->on)
             {
                 if (it != sounding.end())
                 {
-                    problems.push_back(label + ": key " + std::to_string(key) + " on channel " +
-                                       std::to_string(channel) + " starts again at tick " + std::to_string(e.tick) +
-                                       " before it ends");
+                    problems.push_back(label + ": key " + std::to_string(note->key) + " on channel " +
+                                       std::to_string(note->channel) + " starts again at tick " +
+                                       std::to_string(e.tick) + " before it ends");
                 }
-                sounding[{channel, key}] = e.tick;
+                sounding[channel_and_key] = e.tick;
             }
             else if (it != sounding.end())
             {
@@ -407,10 +472,11 @@ std::vector<std::string> Problems(std::span<const uint8_t> data)
             }
         }
 
-        for (const auto& [note, tick] : sounding)
+        for (const auto& [channel_and_key, tick] : sounding)
         {
-            problems.push_back(label + ": key " + std::to_string(note.second) + " on channel " +
-                               std::to_string(note.first) + " from tick " + std::to_string(tick) + " never ends");
+            const auto& [channel, key] = channel_and_key;
+            problems.push_back(label + ": key " + std::to_string(key) + " on channel " + std::to_string(channel) +
+                               " from tick " + std::to_string(tick) + " never ends");
         }
     }
 
